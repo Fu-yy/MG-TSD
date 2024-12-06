@@ -21,8 +21,8 @@ import wandb
 import ast
 from utils import plot
 import warnings
+import datetime
 warnings.filterwarnings("ignore", category=FutureWarning)
-
 
 def str2bool(v):
     return v.lower() in ("yes", "true", "t", "1")
@@ -52,14 +52,30 @@ def parse_args():
     parser.add_argument('--input_size', type=int, default=552,
                         help='the input size of the current dataset, which is different from the original feature size but can be calculated from the original feature size.')
     parser.add_argument('--batch_size', type=int, default=128)
-    parser.add_argument('--mg_dict', type=str, default='1_4',
+    # parser.add_argument('--mg_dict', type=str, default='1_4',
+    #                     help='the multi-granularity list, 1_4 means 1h and 4h, 1_4_8 means 1h, 4h and 8h')
+    # parser.add_argument('--num_gran', type=int, default=2,
+    #                     help='the number of granularities, must be equal to the length of mg_dict')
+    # parser.add_argument('--share_ratio_list', type=str, default="1_0.9",
+    #                     help='the share ratio list, 1_0.9, means that for the second granularity, 90% of the diffusion steps are shared with the finest granularity.')
+    # parser.add_argument('--weight_list', type=str, default="0.9_0.1",
+    #                     help='the weight list, 0.9_0.1 means that the weight for the first granularity is 0.9 and the weight for the second granularity is 0.1.')
+
+
+
+    # ---------------------------- 改 begin
+    parser.add_argument('--mg_dict', type=str, default='1',
                         help='the multi-granularity list, 1_4 means 1h and 4h, 1_4_8 means 1h, 4h and 8h')
-    parser.add_argument('--num_gran', type=int, default=2,
+    parser.add_argument('--num_gran', type=int, default=1,
                         help='the number of granularities, must be equal to the length of mg_dict')
-    parser.add_argument('--share_ratio_list', type=str, default="1_0.9",
+    parser.add_argument('--share_ratio_list', type=str, default="1",
                         help='the share ratio list, 1_0.9, means that for the second granularity, 90% of the diffusion steps are shared with the finest granularity.')
-    parser.add_argument('--weight_list', type=str, default="0.9_0.1",
+    parser.add_argument('--weight_list', type=str, default="1",
                         help='the weight list, 0.9_0.1 means that the weight for the first granularity is 0.9 and the weight for the second granularity is 0.1.')
+    # ---------------------------- 改 end
+
+
+
     parser.add_argument('--run_num', type=str, default="1",
                         help='the index of the run, used for the result file name')
     parser.add_argument('--wandb_space', type=str,
@@ -159,15 +175,17 @@ else:
     dataset_test = test_grouper(test_data)
 
 dataset_train = train_grouper(train_data)
-
-if dataset_name == 'elec':
-    data_train, data_test = creat_coarse_data_elec(dataset_train=dataset_train,
-                                                   dataset_test=dataset_test,
-                                                   mg_dict=mg_dict)
-else:
-    data_train, data_test = creat_coarse_data(dataset_train=dataset_train,
-                                              dataset_test=dataset_test,
-                                              mg_dict=mg_dict)
+#
+# if dataset_name == 'elec':
+#     data_train, data_test = creat_coarse_data_elec(dataset_train=dataset_train,
+#                                                    dataset_test=dataset_test,
+#                                                    mg_dict=mg_dict)
+# else:
+#     data_train, data_test = creat_coarse_data(dataset_train=dataset_train,
+#                                               dataset_test=dataset_test,
+#                                               mg_dict=mg_dict)
+data_train = dataset_train
+data_test = dataset_test
 print("================================================")
 print("initlize the estimator")
 
@@ -291,9 +309,9 @@ for cur_gran_index, cur_gran in enumerate(mg_dict):
     filename = f"{result_path}/output_{dataset_name}_{model_name}_{mg_dict}h_{cur_gran}h_{diff_steps}_{weights}_ratio{share_ratio_list}.csv"
     if not os.path.exists(filename):
         with open(filename, mode="a") as f:
-            f.write("epoch,model_name,CRPS,ND,NRMSE,CRPS_Sum,ND_Sum,NRMSE_Sum\n")
-
-    result_str = f"{epoch}, {model_name}, {CRPS}, {ND}, {NRMSE}, {CRPS_Sum}, {ND_Sum}, {NRMSE_Sum}\n"
+            f.write("epoch,model_name,CRPS,ND,NRMSE,CRPS_Sum,ND_Sum,NRMSE_Sum,DateTime\n")
+    datetime = datetime.datetime.today()
+    result_str = f"{epoch}, {model_name}, {CRPS}, {ND}, {NRMSE}, {CRPS_Sum}, {ND_Sum}, {NRMSE_Sum}, {datetime}\n"
     with open(filename, mode="a") as f:  # append the column names to the file
         f.write(result_str)
     plot(targets_list[cur_gran_index][0], forecasts_list[cur_gran_index][0], prediction_length=dataset.metadata.prediction_length,

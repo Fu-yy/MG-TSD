@@ -13,11 +13,14 @@ export diff_steps=100
 
 export cuda_num=0
 export epoch=30
-export mg_dict='1_4'
-export num_gran=2
-export share_ratio_list='1_0.6'
-export weight_list='0.9_0.1'
-
+#export mg_dict='1_4'
+#export num_gran=2
+#export share_ratio_list='1_0.6'
+#export weight_list='0.9_0.1'
+export mg_dict='1'
+export num_gran=1
+export share_ratio_list='1'
+export weight_list='1'
 
 
 if [ ! -d "./result" ]; then
@@ -36,7 +39,7 @@ if [ ! -d $log_path ]; then
     mkdir $log_path
 fi
 
-for i in {1..1};
+for i in {1..5};
 do
     echo "run $i"
     python ../src/run_mgtsd.py \

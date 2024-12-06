@@ -6,47 +6,47 @@ import torch.nn as nn
 
 from gluonts.core.component import validated
 
-from src.fuy_new_layer import LagsAttention
+from fuy_new_layer import TimeSeriesTransformerWithPatches
 from utils import weighted_average, MeanScaler, NOPScaler
 # from module import GaussianDiffusion,DiffusionOutput
-from mgtsd_module import GaussianDiffusion, DiffusionOutput, default
+from mgtsd_module import GaussianDiffusion, DiffusionOutput
 from epsilon_theta import EpsilonTheta
-import torch.nn.functional as F
+
 
 class mgtsdTrainingNetwork(nn.Module):
     @validated()
     def __init__(
-            self,
-            input_size: int,  # imput size
-            num_layers: int,
-            num_cells: int,
-            cell_type: str,
-            history_length: int,
-            context_length: int,
-            prediction_length: int,
-            dropout_rate: float,
-            lags_seq: List[int],  # lag [1,24,168]
-            target_dim: int,  # target dim 1
-            num_gran: int,  # the number of granularities
-            conditioning_length: int,
-            diff_steps: int,  # diffusion steps 100
-            share_ratio_list: List[float],  # betas are shared
-            loss_type: str,  # L1 loss or L2 loss
-            beta_end: float,  # beta_end 0.1
-            beta_schedule: str,  # linear or cosine
-            residual_layers: int,
-            residual_channels: int,
-            dilation_cycle_length: int,
-            cardinality: List[int] = [1],
-            embedding_dimension: int = 1,
-            weights: List[float] = [0.8, 0.2],
-            scaling: bool = True,
-            share_hidden: bool = True,
-            **kwargs,
+        self,
+        input_size: int,  # imput size
+        num_layers: int,
+        num_cells: int,
+        cell_type: str,
+        history_length: int,
+        context_length: int,
+        prediction_length: int,
+        dropout_rate: float,
+        lags_seq: List[int],  # lag [1,24,168]
+        target_dim: int,  # target dim 1
+        num_gran: int,  # the number of granularities
+        conditioning_length: int,
+        diff_steps: int,  # diffusion steps 100
+        share_ratio_list: List[float],  # betas are shared
+        loss_type: str,  # L1 loss or L2 loss
+        beta_end: float,  # beta_end 0.1
+        beta_schedule: str,  # linear or cosine
+        residual_layers: int,
+        residual_channels: int,
+        dilation_cycle_length: int,
+        cardinality: List[int] = [1],
+        embedding_dimension: int = 1,
+        weights: List[float] = [0.8, 0.2],
+        scaling: bool = True,
+        share_hidden: bool = True,
+        **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self.target_dim = target_dim
-        self.target_dim_2 = 2 * target_dim
+        self.target_dim_2 = 2*target_dim
         self.prediction_length = prediction_length
         self.context_length = context_length
         self.history_length = history_length
@@ -55,7 +55,7 @@ class mgtsdTrainingNetwork(nn.Module):
         self.weights = weights
         self.share_ratio_list = share_ratio_list
         self.num_gran = num_gran
-        self.split_size = [self.target_dim] * self.num_gran
+        self.split_size = [self.target_dim]*self.num_gran
 
         assert len(set(lags_seq)) == len(
             lags_seq), "no duplicated lags allowed!"
@@ -72,6 +72,18 @@ class mgtsdTrainingNetwork(nn.Module):
             batch_first=True,
         ) for _ in range(self.num_gran)])  # shape: (batch_size, seq_len, num_cells)
 
+        patch_size = 24
+        seqlen=48
+        self.transformer_patchs = TimeSeriesTransformerWithPatches(patch_size=patch_size,
+           seqlen=seqlen,
+            embed_dim=num_cells,
+            num_heads=4,
+            num_layers=num_layers,
+            dim_feedforward=num_cells,
+            dropout=0.1,
+            max_seq_len=1000,
+            input_size=input_size)
+
         self.denoise_fn = EpsilonTheta(
             target_dim=target_dim,
             cond_length=conditioning_length,
@@ -80,7 +92,6 @@ class mgtsdTrainingNetwork(nn.Module):
             dilation_cycle_length=dilation_cycle_length,
         )  # dinosing network
 
-        self.get_lag_att = LagsAttention(target_dim=self.target_dim, num_lags=len(self.lags_seq), embed_dim=num_cells,num_heads=4)
         self.diffusion = GaussianDiffusion(
             self.denoise_fn,
             input_size=target_dim,
@@ -103,9 +114,6 @@ class mgtsdTrainingNetwork(nn.Module):
             num_embeddings=self.target_dim, embedding_dim=self.embed_dim
         )
 
-
-
-
         if self.scaling:
             self.scaler = MeanScaler(keepdim=True)
         else:
@@ -113,10 +121,10 @@ class mgtsdTrainingNetwork(nn.Module):
 
     @staticmethod
     def get_lagged_subsequences(
-            sequence: torch.Tensor,
-            sequence_length: int,
-            indices: List[int],
-            subsequences_length: int = 1,
+        sequence: torch.Tensor,
+        sequence_length: int,
+        indices: List[int],
+        subsequences_length: int = 1,
     ) -> torch.Tensor:
         """
         Returns lagged subsequences of a given sequence.
@@ -160,14 +168,14 @@ class mgtsdTrainingNetwork(nn.Module):
         return torch.cat(lagged_values, dim=1).permute(0, 2, 3, 1)
 
     def unroll(
-            self,
-            lags: torch.Tensor,
-            scale: torch.Tensor,
-            time_feat: torch.Tensor,
-            target_dimension_indicator: torch.Tensor,
-            unroll_length: int,
-            gran_index: int,
-            begin_state: Optional[Union[List[torch.Tensor], torch.Tensor]] = None,
+        self,
+        lags: torch.Tensor,
+        scale: torch.Tensor,
+        time_feat: torch.Tensor,
+        target_dimension_indicator: torch.Tensor,
+        unroll_length: int,
+        gran_index: int,
+        begin_state: Optional[Union[List[torch.Tensor], torch.Tensor]] = None,
     ) -> Tuple[
         torch.Tensor,
         Union[List[torch.Tensor], torch.Tensor],
@@ -189,46 +197,52 @@ class mgtsdTrainingNetwork(nn.Module):
         """
 
         # (batch_size, sub_seq_len, target_dim, num_lags)
-        lags_scaled = lags / scale.unsqueeze(
-            -1)  # 归一化过程是将每个滞后子序列的值除以 scale，以确保它们都在相同的尺度上。lags_scaled 的形状和 lags 一样，但值是经过缩放的。 128 48 37 3
+        lags_scaled = lags / scale.unsqueeze(-1) # 归一化过程是将每个滞后子序列的值除以 scale，以确保它们都在相同的尺度上。lags_scaled 的形状和 lags 一样，但值是经过缩放的。 128 48 37 3
 
         input_lags = lags_scaled.reshape(
             (-1, unroll_length, len(self.lags_seq) * self.target_dim)
-        )  # lags_scaled 历史数据  128 48 411
+        ) #  lags_scaled 历史数据  128 48 411
 
         # (batch_size, target_dim, embed_dim)
-        index_embeddings = self.embed(target_dimension_indicator)  # 127 137 -- 128 137 1
+        index_embeddings = self.embed(target_dimension_indicator) # 127 137 -- 128 137 1
 
         # (batch_size, seq_len, target_dim * embed_dim)
         repeated_index_embeddings = (
             index_embeddings.unsqueeze(1)
             .expand(-1, unroll_length, -1, -1)
             .reshape((-1, unroll_length, self.target_dim * self.embed_dim))
-        )  # 128 48 137
-
-        # (batch_size, sub_seq_len, input_dim)
+        ) # 128 48 137
 
 
 
-
+        # ---------------------  改 放弃rnn begin ------------------------------------------
+        # # (batch_size, sub_seq_len, input_dim)
         inputs = torch.cat(
-            (input_lags, repeated_index_embeddings, time_feat),
-            dim=-1)  # 将input_lags（滞后子序列）、repeated_index_embeddings（目标维度的嵌入向量）和 time_feat（时间特征）沿着最后一个维度拼接在一起，形成最终的输入张量 inputs。 #  128 48 552
-
-        # unroll encoder
+            (input_lags, repeated_index_embeddings, time_feat), dim=-1) # 将input_lags（滞后子序列）、repeated_index_embeddings（目标维度的嵌入向量）和 time_feat（时间特征）沿着最后一个维度拼接在一起，形成最终的输入张量 inputs。 #  128 48 552
+        #
+        inputs = self.transformer_patchs(sequence=input_lags, time_feat=time_feat,
+                                          repeated_index_embeddings=repeated_index_embeddings)
+        # # unroll encoder
         rnn = self.rnn[gran_index]
         outputs, state = rnn(inputs, begin_state)  ##  128 48 552 --> 128 48 128 -- 2 128 128
+
+
+        # ---------------------  改 放弃rnn begin ------------------------------------------
+        # state = None
+        # inputs = None
+
+
         return outputs, state, lags_scaled, inputs
 
     def unroll_encoder(
-            self,
-            past_time_feat: torch.Tensor,
-            past_target_cdf: torch.Tensor,
-            past_observed_values: torch.Tensor,
-            past_is_pad: torch.Tensor,
-            future_time_feat: Optional[torch.Tensor],
-            future_target_cdf: Optional[torch.Tensor],
-            target_dimension_indicator: torch.Tensor,
+        self,
+        past_time_feat: torch.Tensor,
+        past_target_cdf: torch.Tensor,
+        past_observed_values: torch.Tensor,
+        past_is_pad: torch.Tensor,
+        future_time_feat: Optional[torch.Tensor],
+        future_target_cdf: Optional[torch.Tensor],
+        target_dimension_indicator: torch.Tensor,
     ) -> Tuple[
         torch.Tensor,
         Union[List[torch.Tensor], torch.Tensor],
@@ -278,6 +292,52 @@ class mgtsdTrainingNetwork(nn.Module):
         inputs
             inputs to the RNN
 
+
+
+
+    -- input：
+    past_time_feat
+
+    含义：过去的时间特征。
+    形状：(batch_size, history_length, num_features)
+    说明：表示每个样本在过去时间步的特征向量。
+
+past_target_cdf
+
+    含义：过去目标值的边缘累积分布函数（CDF）转换后的值。
+    形状：(batch_size, history_length, target_dim)
+    说明：目标变量经过 CDF 转换后的值，用于处理分布信息。
+
+past_observed_values
+
+    含义：指示过去目标值是否被观测到。
+    形状：(batch_size, history_length, target_dim)
+    说明：一个二值张量，表示每个时间步和目标维度的观测情况。
+
+past_is_pad
+
+    含义：指示过去目标值是否被填充（padding）。
+    形状：(batch_size, history_length)
+    说明：用于标记序列中被填充的部分，以便在计算时忽略这些值。
+
+future_time_feat（可选）
+
+    含义：未来的时间特征。
+    形状：(batch_size, prediction_length, num_features)
+    说明：与 past_time_feat 类似，但对应于预测期。
+
+future_target_cdf（可选）
+
+    含义：未来目标值的边缘累积分布函数（CDF）转换后的值。
+    形状：(batch_size, prediction_length, target_dim)
+    说明：与 past_target_cdf 类似，但对应于预测期。
+
+target_dimension_indicator
+
+    含义：时间序列的维度指示器。
+    形状：(batch_size, target_dim)
+    说明：用于指示每个目标维度的特性，可能用于嵌入或其他处理。
+
         """
 
         past_observed_values = torch.min(
@@ -290,18 +350,17 @@ class mgtsdTrainingNetwork(nn.Module):
             sequence_length = self.history_length
             subsequences_length = self.context_length
         else:
-            time_feat = torch.cat(  # 128 48 4
+            time_feat = torch.cat( # 128 48 4
                 (past_time_feat[:, -self.context_length:, ...],
                  future_time_feat),
                 dim=1,
             )
-            sequence = torch.cat((past_target_cdf, future_target_cdf),
-                                 dim=1)  # 128 216 274  past_target_cdf# 128 192 274, future_target_cdf# 128 24 274
+            sequence = torch.cat((past_target_cdf, future_target_cdf), dim=1) # 128 216 274  past_target_cdf# 128 192 274, future_target_cdf# 128 24 274
             sequence_length = self.history_length + self.prediction_length
             subsequences_length = self.context_length + self.prediction_length
 
         # change1: split the sequence into fine and coarse-graine dataset
-        sequences = torch.split(sequence, self.split_size, dim=2)  # 128 216 274 --> 2*(128 216 137)  对分布划分成两部分
+        sequences = torch.split(sequence, self.split_size, dim=2) # 目标变量序列，包括过去的和（如果存在）未来的 CDF 转换后的值。  # 128 216 274 --> 2*(128 216 137)  对分布划分成两部分
         # (batch_size, sub_seq_len, target_dim, num_lags)
         lags = [self.get_lagged_subsequences(
             sequence=sequence,
@@ -310,7 +369,6 @@ class mgtsdTrainingNetwork(nn.Module):
             subsequences_length=subsequences_length,
         ) for sequence in sequences]  # 128 48 137 3  list *2
 
-        lags = [self.get_lag_att(lag) for lag in lags]
 
 
         # scale is computed on the context length last units of the past target
@@ -320,9 +378,9 @@ class mgtsdTrainingNetwork(nn.Module):
             past_observed_values[:, -self.context_length:, ...],
         )
 
-        scales = torch.split(scale, self.split_size, dim=2)  # 128 1 274 --> 2*(128 1 137)
+        scales = torch.split(scale, self.split_size, dim=2) # 128 1 274 --> 2*(128 1 137)
         target_dimension_indicators = torch.split(
-            target_dimension_indicator, self.split_size, dim=1)  # 128 274 --> 2*(128 137)
+            target_dimension_indicator, self.split_size, dim=1)# 128 274 --> 2*(128 137)
         outputs = []
         states = []
         lags_scaled = []
@@ -367,15 +425,15 @@ class mgtsdTrainingNetwork(nn.Module):
         return distr_args
 
     def forward(
-            self,
-            target_dimension_indicator: torch.Tensor,  # 128 274
-            past_time_feat: torch.Tensor,  # 128 192 4
-            past_target_cdf: torch.Tensor,  # 128 192 274
-            past_observed_values: torch.Tensor,  # 128 192 274
-            past_is_pad: torch.Tensor,  # 128 192
-            future_time_feat: torch.Tensor,  # 128 24 4
-            future_target_cdf: torch.Tensor,  # 128 24 274
-            future_observed_values: torch.Tensor,  # 128 24 274
+        self,
+        target_dimension_indicator: torch.Tensor, # 128 274
+        past_time_feat: torch.Tensor, # 128 192 4
+        past_target_cdf: torch.Tensor, # 128 192 274
+        past_observed_values: torch.Tensor,# 128 192 274
+        past_is_pad: torch.Tensor,# 128 192
+        future_time_feat: torch.Tensor, # 128 24 4
+        future_target_cdf: torch.Tensor,# 128 24 274
+        future_observed_values: torch.Tensor,# 128 24 274
     ) -> Tuple[torch.Tensor, ...]:
         """
         Computes the loss for training DeepVAR, all inputs tensors representing
@@ -438,7 +496,7 @@ class mgtsdTrainingNetwork(nn.Module):
              future_target_cdf),
             dim=1,
         )
-        target = target / scale
+        target = target/scale
         targets = torch.split(target, self.split_size, dim=2)
 
         # specifiy the beta variance for the coarse-grained dataset,
@@ -450,27 +508,7 @@ class mgtsdTrainingNetwork(nn.Module):
 
         likelihoods = []
         for ratio_index, share_ratio in enumerate(self.share_ratio_list):
-            # x = targets[ratio_index]
-            # cond = distr_args[ratio_index]
-            # B, T, _ = x.shape
-            # time = torch.randint(0, self.diffusion.num_timesteps, (B * T,), device=x.device).long()
-            # x_start = x.reshape(B * T, 1, -1)
-            # t = time
-            # noise = default(None, lambda: torch.randn_like(x_start))
-            # cond = cond.reshape(B * T, 1, -1)
-            # x_noisy = self.diffusion.q_sample(x_start=x_start, t=t, noise=noise)
-            # x_recon = self.diffusion.denoise_fn(x_noisy, t, cond=cond)
-            # if self.diffusion.loss_type == "l1":
-            #     loss = F.l1_loss(x_recon, x_start)
-            # elif self.diffusion.loss_type == "l2":
-            #     loss = F.mse_loss(x_recon, x_start)
-            # elif self.diffusion.loss_type == "huber":
-            #     loss = F.smooth_l1_loss(x_recon, x_start)
-            # else:
-            #     raise NotImplementedError()
-            # likelihoods.append(loss)
-
-            cur_likelihood = self.diffusion.log_prob(x=targets[ratio_index],cond=distr_args[ratio_index],
+            cur_likelihood = self.diffusion.log_prob(targets[ratio_index], distr_args[ratio_index],
                                                      share_ratio=share_ratio).unsqueeze(-1)
             likelihoods.append(cur_likelihood)
 
@@ -497,7 +535,7 @@ class mgtsdTrainingNetwork(nn.Module):
             likelihood, weights=loss_weights, dim=1).mean() for likelihood in likelihoods]
 
         loss = sum(loss_item * weight_item for loss_item,
-        weight_item in zip(loss, self.weights))
+                   weight_item in zip(loss, self.weights))
         return (loss, likelihoods, distr_args)
 
 
@@ -514,13 +552,13 @@ class mgtsdPredictionNetwork(mgtsdTrainingNetwork):
         self.shifted_lags = [l - 1 for l in self.lags_seq]
 
     def sampling_decoder(
-            self,
-            past_target_cdf: torch.Tensor,
-            target_dimension_indicator: torch.Tensor,
-            time_feat: torch.Tensor,
-            scale: torch.Tensor,
-            begin_states: Union[List[torch.Tensor], torch.Tensor],
-            share_ratio_list: Union[List[torch.Tensor], torch.Tensor],
+        self,
+        past_target_cdf: torch.Tensor,
+        target_dimension_indicator: torch.Tensor,
+        time_feat: torch.Tensor,
+        scale: torch.Tensor,
+        begin_states: Union[List[torch.Tensor], torch.Tensor],
+        share_ratio_list: Union[List[torch.Tensor], torch.Tensor],
     ) -> torch.Tensor:
         """
         Computes sample paths by unrolling the RNN starting with a initial
@@ -605,20 +643,20 @@ class mgtsdPredictionNetwork(mgtsdTrainingNetwork):
         samples_list = [torch.cat(future_samples, dim=1)
                         for future_samples in future_samples_list]
         samples_reshape_list = [samples.reshape((-1, self.num_parallel_samples,
-                                                 self.prediction_length, self.target_dim,
+                                                self.prediction_length, self.target_dim,
                                                  )) for samples in samples_list]
 
         samples = torch.cat(samples_reshape_list, dim=3)
         return samples  # output multiple forecasts
 
     def forward(
-            self,
-            target_dimension_indicator: torch.Tensor,
-            past_time_feat: torch.Tensor,
-            past_target_cdf: torch.Tensor,
-            past_observed_values: torch.Tensor,
-            past_is_pad: torch.Tensor,
-            future_time_feat: torch.Tensor,
+        self,
+        target_dimension_indicator: torch.Tensor,
+        past_time_feat: torch.Tensor,
+        past_target_cdf: torch.Tensor,
+        past_observed_values: torch.Tensor,
+        past_is_pad: torch.Tensor,
+        future_time_feat: torch.Tensor,
     ) -> torch.Tensor:
         """
         Predicts samples given the trained DeepVAR model.
