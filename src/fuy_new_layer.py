@@ -194,20 +194,32 @@ class LagsAttention(nn.Module):
         self.norm3 = nn.LayerNorm(target_dim)
         self.dropout = nn.Dropout(dropout)
 
+
+    def compute_attention(self, q, k, v):
+        scores = torch.matmul(q, k) / torch.sqrt(torch.tensor(q.size(-1)))
+        attn_weights = F.softmax(scores, dim=-1)
+        attn_weights = self.dropout(attn_weights)
+        output = torch.matmul(attn_weights, v)
+        return output, attn_weights
+
     def forward(self,lags):
         # lags: (batch_size, sub_seq_len, target_dim, num_lags)
         batch_size, sub_seq_len, target_dim, num_lags = lags.size()
         # 重塑为 (batch_size, sub_seq_len * num_lags, target_dim)
         lags = lags.permute(0,1,3,2).contiguous()
         lags = torch.reshape(lags, (batch_size, sub_seq_len * num_lags, target_dim))
-        query= key=value = lags
+        query= lags
+        key = lags.permute(0,2,1,).contiguous()
+        value = lags
         # Self-attention
-        attn_output, _ = self.self_attention(query, query, query, attn_mask=None)
+        # attn_output, _ = self.self_attention(query, query, query, attn_mask=None)
+        attn_output,_ = self.compute_attention(query, key, value)
+
         query = self.norm1(query + self.dropout(attn_output))
 
-        # Encoder attention
-        attn_output, _ = self.encoder_attention(query, key, value, attn_mask=None)
-        query = self.norm2(query + self.dropout(attn_output))
+        # # Encoder attention
+        # attn_output, _ = self.encoder_attention(query, key, value, attn_mask=None)
+        # query = self.norm2(query + self.dropout(attn_output))
 
         # Feed-forward network
         ff_output = self.ff(query)

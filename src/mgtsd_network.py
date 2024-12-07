@@ -6,7 +6,7 @@ import torch.nn as nn
 
 from gluonts.core.component import validated
 
-from src.fuy_new_layer import LagsAttention
+from fuy_new_layer import LagsAttention
 from utils import weighted_average, MeanScaler, NOPScaler
 # from module import GaussianDiffusion,DiffusionOutput
 from mgtsd_module import GaussianDiffusion, DiffusionOutput, default
@@ -582,6 +582,9 @@ class mgtsdPredictionNetwork(mgtsdTrainingNetwork):
                     indices=self.shifted_lags,
                     subsequences_length=1,
                 )
+
+                lags = self.get_lag_att(lags)
+
                 rnn_outputs, repeated_states_list[m], _, _ = self.unroll(
                     begin_state=repeated_states_list[m],
                     lags=lags,
