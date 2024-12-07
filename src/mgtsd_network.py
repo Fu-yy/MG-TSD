@@ -80,7 +80,7 @@ class mgtsdTrainingNetwork(nn.Module):
             dilation_cycle_length=dilation_cycle_length,
         )  # dinosing network
 
-        self.get_lag_att = LagsAttention(target_dim=self.target_dim, num_lags=len(self.lags_seq), embed_dim=num_cells,num_heads=4)
+        self.get_lag_att = LagsAttention(target_dim=self.target_dim, num_lags=len(self.lags_seq), embed_dim=num_cells,num_heads=1,dropout=dropout_rate)
         self.diffusion = GaussianDiffusion(
             self.denoise_fn,
             input_size=target_dim,

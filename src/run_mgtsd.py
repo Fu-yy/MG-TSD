@@ -23,7 +23,8 @@ from utils import plot
 import warnings
 import datetime
 warnings.filterwarnings("ignore", category=FutureWarning)
-
+import os
+os.environ["CUDA_VISIBLE_DEVICES"]="0,1,2,3,4,5,6,7"
 def str2bool(v):
     return v.lower() in ("yes", "true", "t", "1")
 

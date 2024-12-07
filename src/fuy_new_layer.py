@@ -157,35 +157,64 @@ class GCNModel(nn.Module):
 
 
 class LagsAttention(nn.Module):
-    def __init__(self, target_dim, num_lags, embed_dim, num_heads):
+    def __init__(self, target_dim, num_lags, embed_dim, num_heads,dropout):
         super(LagsAttention, self).__init__()
         self.target_dim = target_dim
         self.num_lags = num_lags
         self.embed_dim = embed_dim
         self.num_heads = num_heads
         # 线性变换用于查询、键、值
-        self.query = nn.Linear(target_dim, embed_dim)
-        self.key = nn.Linear(target_dim, embed_dim)
-        self.value = nn.Linear(target_dim, embed_dim)
+        # self.query = nn.Linear(target_dim, embed_dim)
+        # self.key = nn.Linear(target_dim, embed_dim)
+        # self.value = nn.Linear(target_dim, embed_dim)
+        #
+        # # 多头注意力
+        # self.attention = nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)
+        # self.fc = nn.Linear(embed_dim, target_dim)
 
-        # 多头注意力
-        self.attention = nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)
-        self.fc = nn.Linear(embed_dim, target_dim)
+
+
+
+        # -----
+
+        self.self_attention = nn.MultiheadAttention(
+            embed_dim=target_dim, num_heads=num_heads, dropout=dropout, batch_first=True
+        )
+        self.norm1 = nn.LayerNorm(target_dim)
+        self.encoder_attention = nn.MultiheadAttention(
+            embed_dim=target_dim, num_heads=num_heads, dropout=dropout, batch_first=True
+        )
+        self.norm2 = nn.LayerNorm(target_dim)
+        self.ff = nn.Sequential(
+            nn.Linear(target_dim, embed_dim*2),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(embed_dim*2, target_dim),
+        )
+        self.norm3 = nn.LayerNorm(target_dim)
+        self.dropout = nn.Dropout(dropout)
+
     def forward(self,lags):
         # lags: (batch_size, sub_seq_len, target_dim, num_lags)
         batch_size, sub_seq_len, target_dim, num_lags = lags.size()
         # 重塑为 (batch_size, sub_seq_len * num_lags, target_dim)
         lags = lags.permute(0,1,3,2).contiguous()
         lags = torch.reshape(lags, (batch_size, sub_seq_len * num_lags, target_dim))
+        query= key=value = lags
+        # Self-attention
+        attn_output, _ = self.self_attention(query, query, query, attn_mask=None)
+        query = self.norm1(query + self.dropout(attn_output))
 
-        # 线性变换
-        Q = self.query(lags)  # (batch_size, sub_seq_len * num_lags, embed_dim)
-        K = self.key(lags)
-        V = self.value(lags)
-        # 应用多头注意力
-        attn_output, _ = self.attention(Q, K, V)  # (batch_size, sub_seq_len * num_lags, embed_dim)
-        # 线性变换回原维度
-        output = self.fc(attn_output)  # (batch_size, sub_seq_len * num_lags, target_dim)
+        # Encoder attention
+        attn_output, _ = self.encoder_attention(query, key, value, attn_mask=None)
+        query = self.norm2(query + self.dropout(attn_output))
+
+        # Feed-forward network
+        ff_output = self.ff(query)
+        output = self.norm3(query + self.dropout(ff_output))
+
+
+
         # 重塑回 (batch_size, sub_seq_len, target_dim, num_lags)
         output = torch.reshape(output, (batch_size, sub_seq_len , num_lags, target_dim)).permute(0, 1, 3, 2)
 
