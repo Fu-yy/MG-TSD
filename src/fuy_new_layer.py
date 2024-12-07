@@ -232,7 +232,188 @@ class LagsAttention(nn.Module):
 
         return output
 
+
+
+class SeqAttention(nn.Module):
+    def __init__(self, target_dim, num_lags, embed_dim, num_heads,dropout):
+        super(SeqAttention, self).__init__()
+        self.target_dim = target_dim
+        self.num_lags = num_lags
+        self.embed_dim = embed_dim
+        self.num_heads = num_heads
+        # 线性变换用于查询、键、值
+        # self.query = nn.Linear(target_dim, embed_dim)
+        # self.key = nn.Linear(target_dim, embed_dim)
+        # self.value = nn.Linear(target_dim, embed_dim)
+        #
+        # # 多头注意力
+        # self.attention = nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)
+        # self.fc = nn.Linear(embed_dim, target_dim)
+
+
+
+
+        # -----
+
+        self.self_attention = nn.MultiheadAttention(
+            embed_dim=target_dim, num_heads=num_heads, dropout=dropout, batch_first=True
+        )
+        self.norm1 = nn.LayerNorm(target_dim)
+        self.encoder_attention = nn.MultiheadAttention(
+            embed_dim=target_dim, num_heads=num_heads, dropout=dropout, batch_first=True
+        )
+        self.norm2 = nn.LayerNorm(target_dim)
+        self.ff = nn.Sequential(
+            nn.Linear(target_dim, embed_dim*2),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(embed_dim*2, target_dim),
+        )
+        self.norm3 = nn.LayerNorm(target_dim)
+        self.dropout = nn.Dropout(dropout)
+
+
+    def compute_attention(self, q, k, v):
+        scores = torch.matmul(q, k) / torch.sqrt(torch.tensor(q.size(-1)))
+        attn_weights = F.softmax(scores, dim=-1)
+        attn_weights = self.dropout(attn_weights)
+        output = torch.matmul(attn_weights, v)
+        return output, attn_weights
+
+    def forward(self,lags):
+        # lags: (batch_size, sub_seq_len, target_dim, num_lags)
+        batch_size, sub_seq_len, target_dim = lags.size()
+        # 重塑为 (batch_size, sub_seq_len * num_lags, target_dim)
+        # lags = lags.permute(0,1,3,2).contiguous()
+        # lags = torch.reshape(lags, (batch_size, sub_seq_len , target_dim))
+        query= lags
+        key = lags.permute(0,2,1).contiguous()
+        value = lags
+        # Self-attention
+        # attn_output, _ = self.self_attention(query, query, query, attn_mask=None)
+        attn_output,_ = self.compute_attention(query, key, value)
+
+        query = self.norm1(query + self.dropout(attn_output))
+
+        # # Encoder attention
+        # attn_output, _ = self.encoder_attention(query, key, value, attn_mask=None)
+        # query = self.norm2(query + self.dropout(attn_output))
+
+        # Feed-forward network
+        ff_output = self.ff(query)
+        output = self.norm3(query + self.dropout(ff_output))
+
+
+
+        # 重塑回 (batch_size, sub_seq_len, target_dim, num_lags)
+        # output = torch.reshape(output, (batch_size, sub_seq_len , num_lags, target_dim)).permute(0, 1, 3, 2)
+
+        return output
+
+
+class FourierAtt(nn.Module):
+    def __init__(self, embed_size,seq_length,feature_size):
+        super(FourierAtt, self).__init__()
+        self.embed_size = embed_size #embed_size
+        self.hidden_size = embed_size #hidden_size
+        self.seq_length = seq_length #hidden_size
+
+        self.sparsity_threshold = 0.01
+        self.scale = 0.02
+        self.embeddings = nn.Parameter(torch.randn(1, self.embed_size))
+        self.r1 = nn.Parameter(self.scale * torch.randn(self.embed_size, self.embed_size))
+        self.i1 = nn.Parameter(self.scale * torch.randn(self.embed_size, self.embed_size))
+        self.rb1 = nn.Parameter(self.scale * torch.randn(self.embed_size))
+        self.ib1 = nn.Parameter(self.scale * torch.randn(self.embed_size))
+        self.r2 = nn.Parameter(self.scale * torch.randn(self.embed_size, self.embed_size))
+        self.i2 = nn.Parameter(self.scale * torch.randn(self.embed_size, self.embed_size))
+        self.rb2 = nn.Parameter(self.scale * torch.randn(self.embed_size))
+        self.ib2 = nn.Parameter(self.scale * torch.randn(self.embed_size))
+        self.channel_independence = 0
+        # self.fc = nn.Sequential(
+        #     nn.Linear(self.seq_length * self.embed_size, self.hidden_size),
+        #     nn.LeakyReLU(),
+        #     nn.Linear(self.hidden_size, self.pre_length)
+        # )
+
+    # dimension extension
+    def tokenEmb(self, x):
+        # x: [Batch, Input length, Channel]
+        x = x.permute(0, 2, 1)
+        x = x.unsqueeze(3)
+        # N*T*1 x 1*D = N*T*D
+        y = self.embeddings
+        return x * y
+
+    # frequency temporal learner
+    def MLP_temporal(self, x, B, N, L):
+        # [B, N, T, D]
+        x = torch.fft.rfft(x, dim=2, norm='ortho') # FFT on L dimension
+        y = self.FreMLP(B, N, L, x, self.r2, self.i2, self.rb2, self.ib2)
+        x = torch.fft.irfft(y, n=self.seq_length, dim=2, norm="ortho")
+        return x
+
+    # frequency channel learner
+    def MLP_channel(self, x, B, N, L):
+        # [B, N, T, D]
+        x = x.permute(0, 2, 1, 3)
+        # [B, T, N, D]
+        x = torch.fft.rfft(x, dim=2, norm='ortho') # FFT on N dimension
+        y = self.FreMLP(B, L, N, x, self.r1, self.i1, self.rb1, self.ib1)
+        x = torch.fft.irfft(y, n=self.feature_size, dim=2, norm="ortho")
+        x = x.permute(0, 2, 1, 3)
+        # [B, N, T, D]
+        return x
+
+    # frequency-domain MLPs
+    # dimension: FFT along the dimension, r: the real part of weights, i: the imaginary part of weights
+    # rb: the real part of bias, ib: the imaginary part of bias
+    def FreMLP(self, B, nd, dimension, x, r, i, rb, ib):
+        o1_real = torch.zeros([B, nd, dimension // 2 + 1, self.embed_size],
+                              device=x.device)
+        o1_imag = torch.zeros([B, nd, dimension // 2 + 1, self.embed_size],
+                              device=x.device)
+
+        o1_real = F.relu(
+            torch.einsum('bijd,dd->bijd', x.real, r) - \
+            torch.einsum('bijd,dd->bijd', x.imag, i) + \
+            rb
+        )
+
+        o1_imag = F.relu(
+            torch.einsum('bijd,dd->bijd', x.imag, r) + \
+            torch.einsum('bijd,dd->bijd', x.real, i) + \
+            ib
+        )
+
+        y = torch.stack([o1_real, o1_imag], dim=-1)
+        y = F.softshrink(y, lambd=self.sparsity_threshold)
+        y = torch.view_as_complex(y)
+        return y
+
+    def forward(self, x):
+        # x: [Batch, Input length, Channel]
+        B, T, N = x.shape
+        # embedding x: [B, N, T, D]
+        x = self.tokenEmb(x)   # b,sqlen,nvar,dim
+        bias = x
+        # [B, N, T, D]
+        if self.channel_independence == '1':
+            x = self.MLP_channel(x, B, N, T)
+        # [B, N, T, D]
+        x = self.MLP_temporal(x, B, N, T)
+        x = x + bias
+        x = self.fc(x.reshape(B, N, -1)).permute(0, 2, 1)
+        return x
+
+
+
 if __name__ == '__main__':
+    fourieratt = FourierAtt(embed_size=128,seq_length=137,feature_size=137)
+    x = torch.randn(128,48,137)
+    res = fourieratt(x)
+    c = 'end'
+
     # 示例使用
     batchsize = 128
     seqlen = 24  # 每个节点的特征维度 (in_features)

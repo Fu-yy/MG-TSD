@@ -6,7 +6,7 @@ import torch.nn as nn
 
 from gluonts.core.component import validated
 
-from fuy_new_layer import LagsAttention
+from fuy_new_layer import LagsAttention, SeqAttention
 from utils import weighted_average, MeanScaler, NOPScaler
 # from module import GaussianDiffusion,DiffusionOutput
 from mgtsd_module import GaussianDiffusion, DiffusionOutput, default
@@ -81,6 +81,17 @@ class mgtsdTrainingNetwork(nn.Module):
         )  # dinosing network
 
         self.get_lag_att = LagsAttention(target_dim=self.target_dim, num_lags=len(self.lags_seq), embed_dim=num_cells,num_heads=1,dropout=dropout_rate)
+
+        self.lag_att = nn.ModuleList([SeqAttention(
+            target_dim=self.target_dim, num_lags=len(self.lags_seq), embed_dim=num_cells, num_heads=1,
+            dropout=dropout_rate
+        ) for _ in range(len(self.lags_seq))])
+
+        self.seq_att  = SeqAttention(
+            target_dim=self.target_dim, num_lags=len(self.lags_seq), embed_dim=num_cells, num_heads=1,
+            dropout=dropout_rate
+        )
+
         self.diffusion = GaussianDiffusion(
             self.denoise_fn,
             input_size=target_dim,
@@ -154,8 +165,9 @@ class mgtsdTrainingNetwork(nn.Module):
             begin_index = -lag_index - subsequences_length
             end_index = -lag_index if lag_index > 0 else None
             # shape: (batch_size, 1, sub_seq_len, C)
-            lagged_values.append(
-                sequence[:, begin_index:end_index, ...].unsqueeze(1))
+            seq_res = sequence[:, begin_index:end_index, ...]
+            seq_res = seq_res.unsqueeze(1)
+            lagged_values.append(seq_res)
         # shape: (batch_size, sub_seq_len, C, I) I = len(indices)=3
         return torch.cat(lagged_values, dim=1).permute(0, 2, 3, 1)
 
@@ -303,14 +315,35 @@ class mgtsdTrainingNetwork(nn.Module):
         # change1: split the sequence into fine and coarse-graine dataset
         sequences = torch.split(sequence, self.split_size, dim=2)  # 128 216 274 --> 2*(128 216 137)  对分布划分成两部分
         # (batch_size, sub_seq_len, target_dim, num_lags)
+
+
+        # ---------------------------- seq att begin -------------------
+
+        seq_att_res = self.seq_att(sequences[0])
+        sequences = torch.split(seq_att_res, self.split_size, dim=2)
+        # ---------------------------- seq att end -------------------
+
         lags = [self.get_lagged_subsequences(
             sequence=sequence,
             sequence_length=sequence_length,
             indices=self.lags_seq,
             subsequences_length=subsequences_length,
         ) for sequence in sequences]  # 128 48 137 3  list *2
+        # ---------------------------- lag att begin -------------------
+        for lag in lags:
+            lag = lag.permute(3,0,1,2)
+            lag_res_list = []
+            for i, sub_lag in enumerate(lag):
+                lag_res = self.lag_att[0](sub_lag)
+                lag_res_list.append(lag_res.unsqueeze(1))
 
-        lags = [self.get_lag_att(lag) for lag in lags]
+
+        lags = torch.cat(lag_res_list, dim=1).permute(0, 2, 3, 1)
+
+        # ---------------------------- lag att end -------------------
+
+
+        # lags = [self.get_lag_att(lag) for lag in lags]
 
 
         # scale is computed on the context length last units of the past target
@@ -556,6 +589,15 @@ class mgtsdPredictionNetwork(mgtsdTrainingNetwork):
             past_target_cdf, self.split_size, dim=2)
         repeated_past_target_cdf_list = [
             repeat(past_target_cdf) for past_target_cdf in past_target_cdf_list]
+        # ---------------------------- seq att begin -------------------
+
+        repeated_past_target_cdf_list_att_res_list = []
+        for i,item in enumerate(repeated_past_target_cdf_list) :
+            repeated_past_target_cdf_list_att_res = self.seq_att(item)
+            repeated_past_target_cdf_list_att_res_list.append(repeated_past_target_cdf_list_att_res)
+        repeated_past_target_cdf_list = repeated_past_target_cdf_list_att_res_list
+        # ---------------------------- seq att end -------------------
+
 
         repeated_time_feat = repeat(time_feat)
         scales_list = torch.split(scale, self.split_size, dim=2)
@@ -581,9 +623,19 @@ class mgtsdPredictionNetwork(mgtsdTrainingNetwork):
                     sequence_length=self.history_length + k,
                     indices=self.shifted_lags,
                     subsequences_length=1,
-                )
+                ) # 700 1 137 3
 
-                lags = self.get_lag_att(lags)
+                # ---------------------------- lag att begin -------------------
+
+                lag = lags.permute(3, 0, 1, 2)
+                lag_res_list = []
+                for i, sub_lag in enumerate(lag):
+                    lag_res = self.lag_att[0](sub_lag)
+                    lag_res_list.append(lag_res.unsqueeze(1))
+
+                lags = torch.cat(lag_res_list, dim=1).permute(0, 2, 3, 1)
+
+                # ---------------------------- lag att end -------------------
 
                 rnn_outputs, repeated_states_list[m], _, _ = self.unroll(
                     begin_state=repeated_states_list[m],
