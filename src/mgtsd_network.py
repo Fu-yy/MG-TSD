@@ -6,12 +6,45 @@ import torch.nn as nn
 
 from gluonts.core.component import validated
 
-from fuy_new_layer import LagsAttention
+from fuy_new_layer import LagsAttention, SeqAttention, FourierFeatureExtractor, FourierAtt, LearnableFrequencyFilter
 from utils import weighted_average, MeanScaler, NOPScaler
 # from module import GaussianDiffusion,DiffusionOutput
 from mgtsd_module import GaussianDiffusion, DiffusionOutput, default
 from epsilon_theta import EpsilonTheta
 import torch.nn.functional as F
+
+
+
+
+def gaussian_low_pass_filter_time_series_rfft(data, cutoff_ratio=0.1, sigma=1.0):
+    """
+    对输入的时间序列数据应用高斯低通滤波器，去除高频噪声（使用 rFFT）。
+
+    参数:
+    - data: 输入时间序列，形状为 (batchsize, seqlen, dim)
+    - cutoff_ratio: 控制高斯滤波器的中心频率 (0 < cutoff_ratio < 0.5)
+    - sigma: 高斯滤波器的标准差，控制滤波器的平滑程度
+
+    返回:
+    - filtered_data: 经过高斯低通滤波后的时间序列，形状与输入相同
+    """
+    batchsize, seqlen, dim = data.shape
+    # 使用 rFFT 进行傅里叶变换
+    fft = torch.fft.rfft(data, dim=1)
+
+    # 创建高斯低通滤波器掩码
+    freqs = torch.fft.rfftfreq(seqlen).to(data.device)  # 频率范围 [0, 0.5]
+    gaussian_mask = torch.exp(-0.5 * ((freqs - 0) / (cutoff_ratio * sigma)) ** 2).unsqueeze(0).unsqueeze(
+        -1)  # 形状 (1, seqlen//2+1, 1)
+
+    # 应用掩码
+    fft_filtered = fft * gaussian_mask
+
+    # 反傅里叶变换，使用 irfft 恢复时域信号
+    filtered_data = torch.fft.irfft(fft_filtered, n=seqlen, dim=1)
+
+    return filtered_data
+
 
 class mgtsdTrainingNetwork(nn.Module):
     @validated()
@@ -72,6 +105,24 @@ class mgtsdTrainingNetwork(nn.Module):
             batch_first=True,
         ) for _ in range(self.num_gran)])  # shape: (batch_size, seq_len, num_cells)
 
+
+        # self.rnn = nn.ModuleList([rnn_cls(
+        #     # input_size=self.target_dim * len(self.lags_seq),
+        #     input_size=415,
+        #     hidden_size=num_cells,
+        #     num_layers=num_layers,
+        #     dropout=dropout_rate,
+        #     batch_first=True,
+        # ) for _ in range(self.num_gran)])  # shape: (batch_size, seq_len, num_cells)
+        self.lags_scale_att = SeqAttention(target_dim=self.target_dim, num_lags=len(self.lags_seq), embed_dim=num_cells, num_heads=1,dropout=dropout_rate)
+
+        self.lags_seq_num_merge = nn.Sequential(
+            nn.Linear(len(self.lags_seq), 1),
+        )
+
+        self.lags_seq_dim_merge = nn.Sequential(
+            nn.Linear(self.target_dim, num_cells),
+        )
         self.denoise_fn = EpsilonTheta(
             target_dim=target_dim,
             cond_length=conditioning_length,
@@ -111,6 +162,9 @@ class mgtsdTrainingNetwork(nn.Module):
         else:
             self.scaler = NOPScaler(keepdim=True)
 
+        self.adj = nn.Linear(input_size,input_size)
+
+        self.frequency_feature = LearnableFrequencyFilter(seqlen=48,embed_dim=input_size)
     @staticmethod
     def get_lagged_subsequences(
             sequence: torch.Tensor,
@@ -191,6 +245,17 @@ class mgtsdTrainingNetwork(nn.Module):
         # (batch_size, sub_seq_len, target_dim, num_lags)
         lags_scaled = lags / scale.unsqueeze(
             -1)  # 归一化过程是将每个滞后子序列的值除以 scale，以确保它们都在相同的尺度上。lags_scaled 的形状和 lags 一样，但值是经过缩放的。 128 48 37 3
+        # lags_scale_list = []
+        # for i in range(lags_scaled.size(-1)):
+        #     lag_item = lags_scaled[...,i]
+        #     res_att = self.lags_scale_att(lag_item)
+        #     lags_scale_list.append(res_att)
+        #
+        # lags_scaled = torch.stack(lags_scale_list,dim=-1)
+        # lags_scaled = self.lags_seq_num_merge(lags_scaled).squeeze(-1)
+        #
+        # lags_scaled = self.lags_seq_dim_merge(lags_scaled)
+
 
         input_lags = lags_scaled.reshape(
             (-1, unroll_length, len(self.lags_seq) * self.target_dim)
@@ -208,13 +273,15 @@ class mgtsdTrainingNetwork(nn.Module):
 
         # (batch_size, sub_seq_len, input_dim)
 
-
-
-
         inputs = torch.cat(
-            (input_lags, repeated_index_embeddings, time_feat),
+            (input_lags,repeated_index_embeddings, time_feat),
             dim=-1)  # 将input_lags（滞后子序列）、repeated_index_embeddings（目标维度的嵌入向量）和 time_feat（时间特征）沿着最后一个维度拼接在一起，形成最终的输入张量 inputs。 #  128 48 552
-
+        inputs = self.adj(inputs)
+        inputs = inputs + self.frequency_feature(inputs)
+        # inputs = torch.cat(
+        #     (input_lags, repeated_index_embeddings, time_feat),
+        #     dim=-1)  # 将input_lags（滞后子序列）、repeated_index_embeddings（目标维度的嵌入向量）和 time_feat（时间特征）沿着最后一个维度拼接在一起，形成最终的输入张量 inputs。 #  128 48 552
+        # inputs = input_lags
         # unroll encoder
         rnn = self.rnn[gran_index]
         outputs, state = rnn(inputs, begin_state)  ##  128 48 552 --> 128 48 128 -- 2 128 128
@@ -309,8 +376,22 @@ class mgtsdTrainingNetwork(nn.Module):
             indices=self.lags_seq,
             subsequences_length=subsequences_length,
         ) for sequence in sequences]  # 128 48 137 3  list *2
-
-        lags = [self.get_lag_att(lag) for lag in lags]
+        # # 应用高斯低通滤波器  ----------------   beigin --------------------------------------
+        # cutoff_ratio = 0.8  # 控制高斯滤波器的中心频率
+        # sigma = 1.0  # 高斯滤波器的标准差
+        # # lags = [self.get_lag_att(lag) for lag in lags]
+        # # lags = [gaussian_low_pass_filter_time_series_rfft(lag, cutoff_ratio=cutoff_ratio,
+        # #                                                             sigma=sigma)for lag in lags]
+        # denoise_lag_list = []
+        # for lag in lags:
+        #     lag = lag.permute(3,0,1,2).contiguous()
+        #     for i in lag:
+        #         denoise_lag = gaussian_low_pass_filter_time_series_rfft(i, cutoff_ratio=cutoff_ratio,sigma=sigma)
+        #         denoise_lag_list.append(denoise_lag)
+        #
+        # denoise_lag_list = torch.stack(denoise_lag_list,dim=0).permute(1,2,3,0).contiguous()
+        # lags = denoise_lag_list
+        # # 应用高斯低通滤波器  ----------------   end --------------------------------------
 
 
         # scale is computed on the context length last units of the past target
@@ -583,7 +664,26 @@ class mgtsdPredictionNetwork(mgtsdTrainingNetwork):
                     subsequences_length=1,
                 )
 
-                lags = self.get_lag_att(lags)
+                # lags = self.get_lag_att(lags)
+
+                # # # 应用高斯低通滤波器  ----------------   beigin --------------------------------------
+                # cutoff_ratio = 0.8  # 控制高斯滤波器的中心频率
+                # sigma = 1.0  # 高斯滤波器的标准差
+                # # lags = [self.get_lag_att(lag) for lag in lags]
+                # # lags = [gaussian_low_pass_filter_time_series_rfft(lag, cutoff_ratio=cutoff_ratio,
+                # #                                                             sigma=sigma)for lag in lags]
+                # denoise_lag_list = []
+                #
+                # lag = lags.permute(3, 0, 1, 2).contiguous()
+                # for i in lag:
+                #     denoise_lag = gaussian_low_pass_filter_time_series_rfft(i, cutoff_ratio=cutoff_ratio,
+                #                                                             sigma=sigma)
+                #     denoise_lag_list.append(denoise_lag)
+                #
+                # denoise_lag_list = torch.stack(denoise_lag_list, dim=0).permute(1, 2, 3, 0).contiguous()
+                # lags = denoise_lag_list
+                # # # 应用高斯低通滤波器  ----------------   end --------------------------------------
+
 
                 rnn_outputs, repeated_states_list[m], _, _ = self.unroll(
                     begin_state=repeated_states_list[m],
