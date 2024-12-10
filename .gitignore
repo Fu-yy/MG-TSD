@@ -15,10 +15,6 @@ __pycache__/
 .Python
 build/
 datasets/
-scripts/log/
-scripts/log
-scripts/result/
-scripts/result
 datasets
 develop-eggs/
 dist/

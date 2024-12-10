@@ -6,7 +6,7 @@ import torch.nn as nn
 
 from gluonts.core.component import validated
 
-from src.fuy_new_layer import LagsAttention
+from fuy_new_layer import LagsAttention, SeqAttention
 from utils import weighted_average, MeanScaler, NOPScaler
 # from module import GaussianDiffusion,DiffusionOutput
 from mgtsd_module import GaussianDiffusion, DiffusionOutput, default
@@ -64,14 +64,31 @@ class mgtsdTrainingNetwork(nn.Module):
 
         self.cell_type = cell_type
         rnn_cls = {"LSTM": nn.LSTM, "GRU": nn.GRU}[cell_type]  # rnn class
+        # self.rnn = nn.ModuleList([rnn_cls(
+        #     input_size=input_size,
+        #     hidden_size=num_cells,
+        #     num_layers=num_layers,
+        #     dropout=dropout_rate,
+        #     batch_first=True,
+        # ) for _ in range(self.num_gran)])  # shape: (batch_size, seq_len, num_cells)
+
+
         self.rnn = nn.ModuleList([rnn_cls(
-            input_size=input_size,
+            input_size=self.target_dim * len(self.lags_seq),
             hidden_size=num_cells,
             num_layers=num_layers,
             dropout=dropout_rate,
             batch_first=True,
         ) for _ in range(self.num_gran)])  # shape: (batch_size, seq_len, num_cells)
+        self.lags_scale_att = SeqAttention(target_dim=self.target_dim, num_lags=len(self.lags_seq), embed_dim=num_cells, num_heads=1,dropout=dropout_rate)
 
+        self.lags_seq_num_merge = nn.Sequential(
+            nn.Linear(len(self.lags_seq), 1),
+        )
+
+        self.lags_seq_dim_merge = nn.Sequential(
+            nn.Linear(self.target_dim, num_cells),
+        )
         self.denoise_fn = EpsilonTheta(
             target_dim=target_dim,
             cond_length=conditioning_length,
@@ -191,6 +208,17 @@ class mgtsdTrainingNetwork(nn.Module):
         # (batch_size, sub_seq_len, target_dim, num_lags)
         lags_scaled = lags / scale.unsqueeze(
             -1)  # 归一化过程是将每个滞后子序列的值除以 scale，以确保它们都在相同的尺度上。lags_scaled 的形状和 lags 一样，但值是经过缩放的。 128 48 37 3
+        # lags_scale_list = []
+        # for i in range(lags_scaled.size(-1)):
+        #     lag_item = lags_scaled[...,i]
+        #     res_att = self.lags_scale_att(lag_item)
+        #     lags_scale_list.append(res_att)
+        #
+        # lags_scaled = torch.stack(lags_scale_list,dim=-1)
+        # lags_scaled = self.lags_seq_num_merge(lags_scaled).squeeze(-1)
+        #
+        # lags_scaled = self.lags_seq_dim_merge(lags_scaled)
+
 
         input_lags = lags_scaled.reshape(
             (-1, unroll_length, len(self.lags_seq) * self.target_dim)
@@ -211,10 +239,10 @@ class mgtsdTrainingNetwork(nn.Module):
 
 
 
-        inputs = torch.cat(
-            (input_lags, repeated_index_embeddings, time_feat),
-            dim=-1)  # 将input_lags（滞后子序列）、repeated_index_embeddings（目标维度的嵌入向量）和 time_feat（时间特征）沿着最后一个维度拼接在一起，形成最终的输入张量 inputs。 #  128 48 552
-
+        # inputs = torch.cat(
+        #     (input_lags, repeated_index_embeddings, time_feat),
+        #     dim=-1)  # 将input_lags（滞后子序列）、repeated_index_embeddings（目标维度的嵌入向量）和 time_feat（时间特征）沿着最后一个维度拼接在一起，形成最终的输入张量 inputs。 #  128 48 552
+        inputs = input_lags
         # unroll encoder
         rnn = self.rnn[gran_index]
         outputs, state = rnn(inputs, begin_state)  ##  128 48 552 --> 128 48 128 -- 2 128 128
@@ -310,7 +338,7 @@ class mgtsdTrainingNetwork(nn.Module):
             subsequences_length=subsequences_length,
         ) for sequence in sequences]  # 128 48 137 3  list *2
 
-        lags = [self.get_lag_att(lag) for lag in lags]
+        #lags = [self.get_lag_att(lag) for lag in lags]
 
 
         # scale is computed on the context length last units of the past target
@@ -582,6 +610,9 @@ class mgtsdPredictionNetwork(mgtsdTrainingNetwork):
                     indices=self.shifted_lags,
                     subsequences_length=1,
                 )
+
+                #lags = self.get_lag_att(lags)
+
                 rnn_outputs, repeated_states_list[m], _, _ = self.unroll(
                     begin_state=repeated_states_list[m],
                     lags=lags,
