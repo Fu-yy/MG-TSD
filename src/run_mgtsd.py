@@ -86,6 +86,11 @@ def parse_args():
     parser.add_argument('--log_metrics', type=str2bool, default="False",
                         help='whether to log the metrics to the wandb when training. it will slow down the training process')
 
+    parser.add_argument('--downsample_factor', type=int, default=2,
+                        help='downsample_factor')
+    parser.add_argument('--num_stages', type=int, default=3,
+                        help='num_stages')
+
     # 返回一个命名空间，包含传递给命令的参数
     return parser.parse_args()
 
@@ -124,6 +129,9 @@ Path(result_path).mkdir(parents=True, exist_ok=True)
 epoch = args.epoch
 diff_steps = args.diff_steps
 num_gran = args.num_gran
+
+downsample_factor = args.downsample_factor
+num_stages = args.num_stages
 
 dataset_name = args.dataset
 input_size = input_size_all[dataset_name]
@@ -225,6 +233,8 @@ estimator = mgtsdEstimator(
     weights=weights,
     num_cells=num_cells,
     num_gran=num_gran,
+    downsample_factor=downsample_factor,
+    num_stages=num_stages,
     trainer=Trainer(device=device,
                     epochs=epoch,
                     learning_rate=learning_rate,

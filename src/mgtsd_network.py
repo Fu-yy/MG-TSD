@@ -7,6 +7,8 @@ import torch.nn as nn
 from gluonts.core.component import validated
 
 from fuy_new_layer import LagsAttention, SeqAttention
+# from fuy_denose_fn import ProgressiveDenoisingModel
+from denoise_function import ProgressiveDenoisingModel
 from utils import weighted_average, MeanScaler, NOPScaler
 # from module import GaussianDiffusion,DiffusionOutput
 from mgtsd_module import GaussianDiffusion, DiffusionOutput, default
@@ -39,6 +41,8 @@ class mgtsdTrainingNetwork(nn.Module):
             dilation_cycle_length: int,
             cardinality: List[int] = [1],
             embedding_dimension: int = 1,
+            downsample_factor: int =2,
+            num_stages: int =3,
             weights: List[float] = [0.8, 0.2],
             scaling: bool = True,
             share_hidden: bool = True,
@@ -80,6 +84,15 @@ class mgtsdTrainingNetwork(nn.Module):
             dropout=dropout_rate,
             batch_first=True,
         ) for _ in range(self.num_gran)])  # shape: (batch_size, seq_len, num_cells)
+
+
+
+        # self.atten_cls = nn.ModuleList([
+        #     SeqAttention(target_dim=self.target_dim, num_lags=len(self.lags_seq), embed_dim=num_cells,num_heads=1,dropout=dropout_rate)
+        #     for _ in range(self.num_gran)
+        # ]
+        #
+        # )
         self.lags_scale_att = SeqAttention(target_dim=self.target_dim, num_lags=len(self.lags_seq), embed_dim=num_cells, num_heads=1,dropout=dropout_rate)
 
         self.lags_seq_num_merge = nn.Sequential(
@@ -97,9 +110,21 @@ class mgtsdTrainingNetwork(nn.Module):
             dilation_cycle_length=dilation_cycle_length,
         )  # dinosing network
 
+        self.unet_denoise_fn = ProgressiveDenoisingModel(
+            target_dim=target_dim,
+            cond_length=conditioning_length,
+            num_stages=num_stages,
+            time_emb_dim=16,
+            residual_layers=residual_layers,
+            residual_channels=residual_channels,
+            dilation_cycle_length=dilation_cycle_length,
+            residual_hidden=64,
+            downsample_factor=downsample_factor
+        )
+
         self.get_lag_att = LagsAttention(target_dim=self.target_dim, num_lags=len(self.lags_seq), embed_dim=num_cells,num_heads=1,dropout=dropout_rate)
         self.diffusion = GaussianDiffusion(
-            self.denoise_fn,
+            self.unet_denoise_fn,
             input_size=target_dim,
             diff_steps=diff_steps,
             loss_type=loss_type,
@@ -108,6 +133,8 @@ class mgtsdTrainingNetwork(nn.Module):
             share_ratio_list=share_ratio_list,
             beta_schedule=beta_schedule,
         )  # diffusion network
+
+
 
         self.distr_output = DiffusionOutput(
             self.diffusion, input_size=target_dim, cond_size=conditioning_length

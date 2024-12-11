@@ -66,6 +66,8 @@ class mgtsdEstimator(PyTorchEstimator):
         context_length: Optional[int] = None,
         num_layers: int = 2,
         num_cells: int = 40,
+        downsample_factor: int = 2,
+        num_stages: int = 3,
         cell_type: str = "LSTM",
         num_parallel_samples: int = 100,
         dropout_rate: float = 0.1,
@@ -149,6 +151,9 @@ class mgtsdEstimator(PyTorchEstimator):
             min_past=0 if pick_incomplete else self.history_length,
             min_future=prediction_length,
         )
+
+        self.downsample_factor=downsample_factor
+        self.num_stages=num_stages
 
     def create_transformation(self) -> Transformation:
         """时序数据的转换
@@ -259,6 +264,8 @@ class mgtsdEstimator(PyTorchEstimator):
             scaling=self.scaling,
             share_ratio_list=self.share_ratio_list,
             conditioning_length=self.conditioning_length,
+            downsample_factor=self.downsample_factor,
+            num_stages=self.num_stages
         ).to(device)
 
     def create_predictor(
@@ -293,6 +300,8 @@ class mgtsdEstimator(PyTorchEstimator):
             share_ratio_list=self.share_ratio_list,
             conditioning_length=self.conditioning_length,
             num_parallel_samples=self.num_parallel_samples,
+            downsample_factor=self.downsample_factor,
+            num_stages=self.num_stages
         ).to(device)
 
         copy_parameters(trained_network, prediction_network)  # copy parameters
