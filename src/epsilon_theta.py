@@ -4,6 +4,8 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
+from denoise_function import gaussian_low_pass_filter_gpu
+
 
 class DiffusionEmbedding(nn.Module):
     def __init__(self, dim, proj_dim, max_steps=500):
@@ -140,7 +142,12 @@ class EpsilonTheta(nn.Module):
         x = F.leaky_relu(x, 0.4)  # [B,8,T]
 
         diffusion_step = self.diffusion_embedding(time)  # [B,64]
+        # 添加高斯去噪 ---------------   begin -------------------------
+        # cond = gaussian_low_pass_filter_gpu(cond.permute(0, 2, 1)).permute(0, 2, 1).contiguous()
+        # 添加高斯去噪 ---------------   end  -------------------------
+
         cond_up = self.cond_upsampler(cond)  # [B,1,T]
+
         skip = []
         for layer in self.residual_layers:
             x, skip_connection = layer(x, cond_up, diffusion_step)

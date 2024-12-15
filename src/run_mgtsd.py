@@ -1,4 +1,4 @@
-
+import random
 import warnings
 import matplotlib.pyplot as plt
 
@@ -95,7 +95,10 @@ def parse_args():
     return parser.parse_args()
 
 if __name__ == '__main__':
-
+    fix_seed = 2024
+    random.seed(fix_seed)
+    torch.manual_seed(fix_seed)
+    np.random.seed(fix_seed)
     alias = {
         'elec': 'electricity_nips',
         'wiki': 'wiki-rolling_nips',

@@ -355,7 +355,7 @@ class ProgressiveDenoisingModel(nn.Module):
                 target_dim=target_dim // (downsample_factor ** i)
             ) for i in range(num_stages)
         ])
-
+        self.residual_layers=residual_layers
         # 定义每个阶段的残差层
         self.stages = nn.ModuleList([
             nn.ModuleList([
@@ -373,17 +373,10 @@ class ProgressiveDenoisingModel(nn.Module):
             for _ in range(num_stages)
         ])
 
-        # self.skip_projections = nn.ModuleList([
-        #     nn.Conv1d(residual_channels, residual_channels, 3)
-        #     for _ in range(num_stages)
-        # ])
-
         self.skip_projections = nn.ModuleList([
-            nn.ModuleList([
-                nn.Conv1d(residual_channels, residual_channels, 3) for j in range(residual_layers)
-            ]) for _ in range(num_stages)
+            nn.Conv1d(residual_channels, residual_channels, 3)
+            for _ in range(num_stages)
         ])
-
 
         # 下采样和上采样模块
         self.downsamplers = nn.ModuleList([
@@ -392,7 +385,7 @@ class ProgressiveDenoisingModel(nn.Module):
         ])
 
         self.upsamplers = nn.ModuleList([
-            UpsampleBlock(up_factor=downsample_factor, in_dim=target_dim // (downsample_factor ** (i+1)),target_dim=target_dim,in_pad=0,out_pad=0)
+            UpsampleBlock(up_factor=downsample_factor, in_dim=target_dim // (downsample_factor ** (i+1)),target_dim=target_dim,in_pad=4,out_pad=4)
             for i in range(num_stages - 1)
         ])
 
@@ -403,15 +396,9 @@ class ProgressiveDenoisingModel(nn.Module):
         ])
 
         # 输出投影
-        # self.output_projections = nn.ModuleList([
-        #     nn.Conv1d(residual_channels, 1, 3)
-        #     for _ in range(num_stages)
-        # ])
-
         self.output_projections = nn.ModuleList([
-            nn.ModuleList([
-                nn.Conv1d(residual_channels, 1, 3) for j in range(residual_layers)
-            ]) for _ in range(num_stages)
+            nn.Conv1d(residual_channels, 1, 3)
+            for _ in range(num_stages)
         ])
 
         self.skip_output_projections = nn.ModuleList([
@@ -420,10 +407,10 @@ class ProgressiveDenoisingModel(nn.Module):
         ])
 
         # 初始化权重
-        # for proj in self.input_projections + self.skip_projections:
-        #     nn.init.kaiming_normal_(proj.weight)
-        # for out_proj in self.output_projections:
-        #     nn.init.zeros_(out_proj.weight)
+        for proj in self.input_projections + self.skip_projections:
+            nn.init.kaiming_normal_(proj.weight)
+        for out_proj in self.output_projections:
+            nn.init.zeros_(out_proj.weight)
 
     def forward(self, x, time, cond):
         """
@@ -465,14 +452,18 @@ class ProgressiveDenoisingModel(nn.Module):
         denoised = F.leaky_relu(denoised, 0.4)
 
         # 残差层
-        for ind,layer in enumerate(self.stages[-1]):
-            denoised, skip = layer(denoised, cond_up, diffusion_step)
-            # 跳跃连接投影
-            skip = self.skip_projections[-1][ind](skip)
-            skip = F.leaky_relu(skip, 0.4)
-            skip = self.output_projections[-1][ind](skip)  # [B, 1, T_down]
+        skip_list = []
 
-            skip_connections[-1] += skip
+        for layer in self.stages[-1]:
+            denoised, skip_item = layer(denoised, cond_up, diffusion_step)
+            # 跳跃连接投影
+            # skip = self.skip_projections[-1](skip)
+            # skip = F.leaky_relu(skip, 0.4)
+            # skip = self.output_projections[-1](skip)  # [B, 1, T_down]
+            skip_list.append(skip_item)
+        skip_list_res = torch.sum(torch.stack(skip_list), dim=0) / \
+                            math.sqrt(self.residual_layers)  # [B,8,T]
+        skip_connections[-1] += skip_list_res
 
 
         # 逐级上采样并融合跳跃连接
@@ -480,40 +471,39 @@ class ProgressiveDenoisingModel(nn.Module):
             # 上采样
             up_skip = self.upsamplers[i](skip_connections[i+1])  # [B, C, T]
 
+            # 确保上采样后的长度与对应输入匹配
+            # target_length = inputs[i].size(-1)
+            # if up_skip.size(-1) != target_length:
+            #     up_skip = F.interpolate(up_skip, size=target_length, mode='linear', align_corners=True)
 
             # 条件上采样
             cond_up = self.cond_upsamplers[i](conditions[i])  # [B, target_dim, T]
-            # 确保上采样后的长度与对应输入匹配
-            target_length = cond_up.size(-1)
-            if up_skip.size(-1) != target_length:
-                up_skip = F.interpolate(up_skip, size=target_length, mode='linear', align_corners=True)
-
 
             # 输入投影 + 残差
             stage_input = self.input_projections[i](inputs[i] )  # [B, residual_channels, T]
 
-            cond_up =cond_up + up_skip[...,-stage_input.size(-1):]
+            stage_input =stage_input + up_skip[...,-stage_input.size(-1):]
             stage_input = F.leaky_relu(stage_input, 0.4)
 
             # 残差层
-            for ind,layer in enumerate(self.stages[i]):
-                stage_input, skip = layer(stage_input, cond_up, diffusion_step)
-
+            skip_list = []
+            for layer in self.stages[i]:
+                stage_input, skip_item = layer(stage_input, cond_up, diffusion_step)
+                skip_list.append(skip_item)
                 # 跳跃连接投影
-                skip = self.skip_projections[i][ind](skip)
-                skip = F.leaky_relu(skip, 0.4)
-                skip = self.output_projections[i][ind](skip)  # [B, 1, T_down]
-                skip_connections[i] += skip
+            skip_list_res = torch.sum(torch.stack(skip_list), dim=0) / \
+                            math.sqrt(self.residual_layers)  # [B,8,T]
+            skip_connections[i] += skip_list_res
+
             if i == 0:
                 # 跳跃连接投影
-                # denoised = self.skip_projections[i](denoised)
-                # denoised = F.leaky_relu(denoised, 0.4)
-                # denoised = self.output_projections[i](denoised)  # [B, 1, T]
+                skip = self.skip_projections[i](skip_connections[i])
+                denoised = F.leaky_relu(skip, 0.4)
+                denoised = self.output_projections[i](denoised)  # [B, 1, T]
                 # skip_connection_projections = self.skip_output_projections[i](skip_connections[i][...,-denoised.size(-1):])
                 # 融合跳跃连接（可以选择加权、拼接等方式）
                 # 这里选择简单相加
-                # denoised = denoised + skip_connection_projections
-                denoised = skip_connections[i]
+                denoised = denoised
 
         return denoised  # [B, 1, T]
 

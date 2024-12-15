@@ -125,6 +125,7 @@ class mgtsdTrainingNetwork(nn.Module):
         self.get_lag_att = LagsAttention(target_dim=self.target_dim, num_lags=len(self.lags_seq), embed_dim=num_cells,num_heads=1,dropout=dropout_rate)
         self.diffusion = GaussianDiffusion(
             self.unet_denoise_fn,
+            # self.denoise_fn,
             input_size=target_dim,
             diff_steps=diff_steps,
             loss_type=loss_type,
@@ -143,6 +144,7 @@ class mgtsdTrainingNetwork(nn.Module):
         self.proj_dist_args = self.distr_output.get_args_proj(
             num_cells)  # projection distribution arguments
         self.embed_dim = 1
+        self.linear_rnn = nn.Linear(num_cells,conditioning_length)
         self.embed = nn.Embedding(
             num_embeddings=self.target_dim, embedding_dim=self.embed_dim
         )
@@ -419,6 +421,7 @@ class mgtsdTrainingNetwork(nn.Module):
             Distribution arguments
         """
         (distr_args,) = self.proj_dist_args(rnn_outputs)
+        # distr_args = self.linear_rnn(rnn_outputs)
         return distr_args
 
     def forward(
