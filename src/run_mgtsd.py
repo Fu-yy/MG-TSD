@@ -52,13 +52,13 @@ def parse_args():
     parser.add_argument('--input_size', type=int, default=552,
                         help='the input size of the current dataset, which is different from the original feature size but can be calculated from the original feature size.')
     parser.add_argument('--batch_size', type=int, default=128)
-    parser.add_argument('--mg_dict', type=str, default='1_4',
+    parser.add_argument('--mg_dict', type=str, default='1',
                         help='the multi-granularity list, 1_4 means 1h and 4h, 1_4_8 means 1h, 4h and 8h')
-    parser.add_argument('--num_gran', type=int, default=2,
+    parser.add_argument('--num_gran', type=int, default=1,
                         help='the number of granularities, must be equal to the length of mg_dict')
-    parser.add_argument('--share_ratio_list', type=str, default="1_0.9",
+    parser.add_argument('--share_ratio_list', type=str, default="1",
                         help='the share ratio list, 1_0.9, means that for the second granularity, 90% of the diffusion steps are shared with the finest granularity.')
-    parser.add_argument('--weight_list', type=str, default="0.9_0.1",
+    parser.add_argument('--weight_list', type=str, default="1.0",
                         help='the weight list, 0.9_0.1 means that the weight for the first granularity is 0.9 and the weight for the second granularity is 0.1.')
     parser.add_argument('--run_num', type=str, default="1",
                         help='the index of the run, used for the result file name')
@@ -159,15 +159,16 @@ else:
     dataset_test = test_grouper(test_data)
 
 dataset_train = train_grouper(train_data)
-
-if dataset_name == 'elec':
-    data_train, data_test = creat_coarse_data_elec(dataset_train=dataset_train,
-                                                   dataset_test=dataset_test,
-                                                   mg_dict=mg_dict)
-else:
-    data_train, data_test = creat_coarse_data(dataset_train=dataset_train,
-                                              dataset_test=dataset_test,
-                                              mg_dict=mg_dict)
+data_train = dataset_train
+data_test = dataset_test
+# if dataset_name == 'elec':
+#     data_train, data_test = creat_coarse_data_elec(dataset_train=dataset_train,
+#                                                    dataset_test=dataset_test,
+#                                                    mg_dict=mg_dict)
+# else:
+#     data_train, data_test = creat_coarse_data(dataset_train=dataset_train,
+#                                               dataset_test=dataset_test,
+#                                               mg_dict=mg_dict)
 print("================================================")
 print("initlize the estimator")
 
@@ -189,6 +190,9 @@ print("initlize the estimator")
 #                     num_batches_per_epoch=100,
 #                     batch_size=batch_size,)
 # )
+target_dim = int(dataset.metadata.feat_static_cat[0].cardinality),
+prediction_length = dataset.metadata.prediction_length,
+context_length = dataset.metadata.prediction_length,
 
 estimator = mgtsdEstimator(
     target_dim=int(dataset.metadata.feat_static_cat[0].cardinality),

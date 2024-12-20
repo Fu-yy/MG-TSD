@@ -108,7 +108,7 @@ class mgtsdTrainingNetwork(nn.Module):
             loss_type=loss_type,
             beta_end=beta_end,
             # share ratio, new argument to control diffusion and sampling
-            share_ratio_list=share_ratio_list,
+            #share_ratio_list=share_ratio_list,
             beta_schedule=beta_schedule,
         )  # diffusion network
 
@@ -295,7 +295,7 @@ class mgtsdTrainingNetwork(nn.Module):
         past_observed_values = torch.min(
             past_observed_values, 1 - past_is_pad.unsqueeze(-1)
         )
-        # 全用过去的诗句
+
         if future_time_feat is None or future_target_cdf is None:
             time_feat = past_time_feat[:, -self.context_length:, ...]
             sequence = past_target_cdf
@@ -443,8 +443,6 @@ class mgtsdTrainingNetwork(nn.Module):
 
         # put together target sequence
         # (batch_size, seq_len, target_dim)
-
-
         target = torch.cat(
             (past_target_cdf[:, -self.context_length:, ...],
              future_target_cdf),
@@ -462,8 +460,7 @@ class mgtsdTrainingNetwork(nn.Module):
 
         likelihoods = []
         for ratio_index, share_ratio in enumerate(self.share_ratio_list):
-            # cur_likelihood = self.diffusion.log_prob(targets[ratio_index], distr_args[ratio_index]).unsqueeze(-1)
-            cur_likelihood = self.diffusion.log_prob(x=targets[ratio_index], cond=distr_args[ratio_index],
+            cur_likelihood = self.diffusion.log_prob(targets[ratio_index], distr_args[ratio_index],
                                                      share_ratio=share_ratio).unsqueeze(-1)
             likelihoods.append(cur_likelihood)
 
@@ -540,12 +537,10 @@ class mgtsdPredictionNetwork(mgtsdTrainingNetwork):
             prediction_length, target_dim).
         """
 
-        # def repeat(tensor, dim=0):
-        #     return tensor.repeat_interleave(repeats=self.num_parallel_samples, dim=dim)
-        # def repeat(tensor, dim=0):
-        #     return tensor
         def repeat(tensor, dim=0):
             return tensor.repeat_interleave(repeats=self.num_parallel_samples, dim=dim)
+        # def repeat(tensor, dim=0):
+        #     return tensor.repeat_interleave(repeats=1, dim=dim)
 
         # blows-up the dimension of each tensor to
         # batch_size * self.num_sample_paths for increasing parallelism
@@ -582,9 +577,6 @@ class mgtsdPredictionNetwork(mgtsdTrainingNetwork):
                     indices=self.shifted_lags,
                     subsequences_length=1,
                 )
-
-                # lags = self.get_lag_att(lags)
-
                 rnn_outputs, repeated_states_list[m], _, _ = self.unroll(
                     begin_state=repeated_states_list[m],
                     lags=lags,
@@ -602,20 +594,17 @@ class mgtsdPredictionNetwork(mgtsdTrainingNetwork):
                 # seq = range(0, self.diff_steps, skip)
                 # nonlocal call_count
                 # call_count += 1
-                # new_samples = self.diffusion.sample_flow_inner(cond=distr_args,
-                #                                     share_ratio=share_ratio,
-                #                                     seq_timestep=None,sample_speed=self.sample_speed)
+                new_samples = self.diffusion.sample_flow_inner(cond=distr_args,
+                                                    share_ratio=share_ratio,
+                                                    seq_timestep=None,sample_speed=self.sample_speed)
                 # new_samples = self.diffusion.sample_flow_modify(cond=distr_args,
                 #                                     share_ratio=share_ratio,
                 #                                     sample_speed=self.sample_speed)
 
                 # -------------------------- flow end ----------------------------
 
-                new_samples = self.diffusion.sample(cond=distr_args,
-                                                    share_ratio=share_ratio)
 
-
-                # new_samples = self.diffusion.sample_ode(cond=distr_args,
+                # new_samples = self.diffusion.sample(cond=distr_args,
                 #                                     share_ratio=share_ratio)
 
                 new_samples *= repeated_scales_list[m]
