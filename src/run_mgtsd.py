@@ -160,14 +160,16 @@ else:
 
 dataset_train = train_grouper(train_data)
 
-if dataset_name == 'elec':
-    data_train, data_test = creat_coarse_data_elec(dataset_train=dataset_train,
-                                                   dataset_test=dataset_test,
-                                                   mg_dict=mg_dict)
-else:
-    data_train, data_test = creat_coarse_data(dataset_train=dataset_train,
-                                              dataset_test=dataset_test,
-                                              mg_dict=mg_dict)
+# if dataset_name == 'elec':
+#     data_train, data_test = creat_coarse_data_elec(dataset_train=dataset_train,
+#                                                    dataset_test=dataset_test,
+#                                                    mg_dict=mg_dict)
+# else:
+#     data_train, data_test = creat_coarse_data(dataset_train=dataset_train,
+#                                               dataset_test=dataset_test,
+#
+#                                               mg_dict=mg_dict)
+data_train, data_test = dataset_train,dataset_test
 print("================================================")
 print("initlize the estimator")
 

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="07279725-e2de-4503-a674-0fa4a09f0933" name="MG-TSD40-autodl">
+        <fileTransfer accessType="SFTP" host="connect.beijinga.seetacloud.com" port="40374" sshConfigId="ab05bd53-3590-4fde-a85c-822375d4092f" sshConfig="root@connect.beijinga.seetacloud.com:40374 password">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" passiveMode="true" shareSSLContext="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>

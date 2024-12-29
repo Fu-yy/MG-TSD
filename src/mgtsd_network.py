@@ -5,6 +5,12 @@ import torch
 import torch.nn as nn
 
 from gluonts.core.component import validated
+
+from Freq_diffusion import FrequencyDiffusion
+from down_up_fourier_pool import Average_pool_upsampler, DonwSample_Fourier, moving_avg
+
+from manifold_diffusion import SphereDiffusion
+from ode_diffusion import OdeGaussianDiffusion
 from utils import weighted_average, MeanScaler, NOPScaler
 # from module import GaussianDiffusion,DiffusionOutput
 from mgtsd_module import GaussianDiffusion, DiffusionOutput
@@ -88,6 +94,32 @@ class mgtsdTrainingNetwork(nn.Module):
             share_ratio_list=share_ratio_list,
             beta_schedule=beta_schedule,
         )  # diffusion network
+        self.sphere_diffusion = SphereDiffusion(
+            denoise_fn=self.denoise_fn,
+            input_size=target_dim,
+            dim=target_dim,
+            num_timesteps=diff_steps,
+            loss_type=loss_type,
+            # share ratio, new argument to control diffusion and sampling
+        )  # diffusion network
+
+        self.ode_diffusion = OdeGaussianDiffusion(
+            denoise_fn=self.denoise_fn,
+            input_size=target_dim,
+            loss_type=loss_type,
+            # share ratio, new argument to control diffusion and sampling
+        )  # diffusion network
+
+        self.freq_diffusion = FrequencyDiffusion(
+            denoise_net=self.denoise_fn,
+            seq_len=48,
+            dim=target_dim,
+            loss_type=loss_type,
+            # share ratio, new argument to control diffusion and sampling
+        )  # diffusion network
+
+        # self.diffusion = self.freq_diffusion
+
 
         self.distr_output = DiffusionOutput(
             self.diffusion, input_size=target_dim, cond_size=conditioning_length
@@ -95,6 +127,7 @@ class mgtsdTrainingNetwork(nn.Module):
 
         self.proj_dist_args = self.distr_output.get_args_proj(
             num_cells)  # projection distribution arguments
+
         self.embed_dim = 1
         self.embed = nn.Embedding(
             num_embeddings=self.target_dim, embedding_dim=self.embed_dim
@@ -104,6 +137,34 @@ class mgtsdTrainingNetwork(nn.Module):
             self.scaler = MeanScaler(keepdim=True)
         else:
             self.scaler = NOPScaler(keepdim=True)
+
+        kernel_list_past=[2,8]
+        # self.avg_poolar_past =nn.ModuleList([
+        #     Average_pool_upsampler(kernel_size=kernel)
+        #     for kernel in kernel_list_past
+        # ])
+        self.avg_poolar_past =nn.ModuleList([
+            moving_avg(kernel_size=kernel,stride=1)
+            for kernel in kernel_list_past
+        ])
+        freq_range_list_past = [(0,15),(0,40)]
+        self.fourier_mask_past = nn.ModuleList([
+            DonwSample_Fourier(freq_range=freq_range)
+            for freq_range in freq_range_list_past
+        ])
+
+        kernel_list_futrue=[2,8]
+        self.avg_poolar_futrue =nn.ModuleList([
+            Average_pool_upsampler(kernel_size=kernel)
+            for  kernel in kernel_list_futrue
+        ])
+        freq_range_list_futrue = [(0,15),(0,40)]
+        self.fourier_mask_futrue = nn.ModuleList([
+            DonwSample_Fourier(freq_range=freq_range)
+            for freq_range in freq_range_list_futrue
+        ])
+
+
 
     @staticmethod
     def get_lagged_subsequences(
@@ -211,11 +272,11 @@ class mgtsdTrainingNetwork(nn.Module):
     def unroll_encoder(
         self,
         past_time_feat: torch.Tensor,
-        past_target_cdf: torch.Tensor,
-        past_observed_values: torch.Tensor,
+        past_target_cdf,
+        past_observed_values,
         past_is_pad: torch.Tensor,
         future_time_feat: Optional[torch.Tensor],
-        future_target_cdf: Optional[torch.Tensor],
+        future_target_cdf,
         target_dimension_indicator: torch.Tensor,
     ) -> Tuple[
         torch.Tensor,
@@ -289,6 +350,7 @@ class mgtsdTrainingNetwork(nn.Module):
 
         # change1: split the sequence into fine and coarse-graine dataset
         sequences = torch.split(sequence, self.split_size, dim=2)  # 128 216 274 --> 2*(128 216 137)  对分布划分成两部分
+        # sequences = (sequence)  # 128 216 274 --> 2*(128 216 137)  对分布划分成两部分
         # (batch_size, sub_seq_len, target_dim, num_lags)
         lags = [self.get_lagged_subsequences(
             sequence=sequence,
@@ -403,6 +465,30 @@ class mgtsdTrainingNetwork(nn.Module):
         """
 
         seq_len = self.context_length + self.prediction_length
+        # # 划分粒度  begin------------------------#####################################################################
+        # past_observed_values_list = []
+        # down_res_past_list = []
+        # down_res_future_list = []
+        # target_dimension_indicator_list = []
+        # future_observed_values_list = []
+        # for down_layer in self.fourier_mask_past:
+        #     past_observed_values_list.append(past_observed_values)
+        #     down_res = down_layer(torch.cat([past_target_cdf,future_target_cdf],dim=1))
+        #     down_res_past  = down_res[:,0:past_target_cdf.shape[1] ,:]
+        #     down_res_future  = down_res[:,past_target_cdf.shape[1]:,:]
+        #     down_res_past_list.append(down_res_past)
+        #     down_res_future_list.append(down_res_future)
+        #     future_observed_values_list.append(future_observed_values)
+        #     target_dimension_indicator_list.append(target_dimension_indicator)
+        # past_target_cdf = torch.cat(down_res_past_list,dim=-1)
+        # future_target_cdf = torch.cat(down_res_future_list,dim=-1)
+        # past_observed_values = torch.cat(past_observed_values_list,dim=-1)
+        # target_dimension_indicator = torch.cat(target_dimension_indicator_list,dim=-1)
+        # future_observed_values = torch.cat(future_observed_values_list,dim=-1)
+        # # 划分粒度  end------------------------#####################################################################
+        #
+
+
 
         # unroll the decoder in "training mode", i.e. by providing future data
         rnn_outputs, _, scale, _, _ = self.unroll_encoder(
@@ -558,6 +644,8 @@ class mgtsdPredictionNetwork(mgtsdTrainingNetwork):
                 distr_args = self.distr_args(rnn_outputs)
                 new_samples = self.diffusion.sample(cond=distr_args,
                                                     share_ratio=share_ratio)
+                # new_samples = self.diffusion.sample_ode_torchdiffeq(cond=distr_args,
+                #                                     )
 
                 new_samples *= repeated_scales_list[m]
 
@@ -613,6 +701,31 @@ class mgtsdPredictionNetwork(mgtsdTrainingNetwork):
             prediction_length, target_dim).
 
         """
+
+
+        # # 划分粒度  begin------------------------#####################################################################
+        # # 划分粒度  begin------------------------#####################################################################
+        # past_observed_values_list = []
+        # down_res_past_list = []
+        # down_res_future_list = []
+        # target_dimension_indicator_list = []
+        # for down_layer in self.fourier_mask_past:
+        #     past_observed_values_list.append(past_observed_values)
+        #     down_res = down_layer(past_target_cdf)
+        #     down_res_past = down_res
+        #     # down_res_future = down_res[:, past_target_cdf.shape[1]:, :]
+        #     down_res_past_list.append(down_res_past)
+        #     # down_res_future_list.append(down_res_future)
+        #     target_dimension_indicator_list.append(target_dimension_indicator)
+        # past_target_cdf = torch.cat(down_res_past_list, dim=-1)
+        # # future_target_cdf = torch.cat(down_res_future_list, dim=-1)
+        # past_observed_values = torch.cat(past_observed_values_list, dim=-1)
+        # target_dimension_indicator = torch.cat(target_dimension_indicator_list, dim=-1)
+        # # 划分粒度  end------------------------#####################################################################
+        # # 划分粒度  end------------------------#####################################################################
+
+
+
 
         # mark padded data as unobserved
         # (batch_size, target_dim, seq_len)
