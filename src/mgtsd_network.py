@@ -138,31 +138,31 @@ class mgtsdTrainingNetwork(nn.Module):
         else:
             self.scaler = NOPScaler(keepdim=True)
 
-        kernel_list_past=[2,8]
+        # kernel_list_past=[2,8]
         # self.avg_poolar_past =nn.ModuleList([
         #     Average_pool_upsampler(kernel_size=kernel)
         #     for kernel in kernel_list_past
         # ])
-        self.avg_poolar_past =nn.ModuleList([
-            moving_avg(kernel_size=kernel,stride=1)
-            for kernel in kernel_list_past
-        ])
-        freq_range_list_past = [(0,15),(0,40)]
-        self.fourier_mask_past = nn.ModuleList([
-            DonwSample_Fourier(freq_range=freq_range)
-            for freq_range in freq_range_list_past
-        ])
-
-        kernel_list_futrue=[2,8]
-        self.avg_poolar_futrue =nn.ModuleList([
-            Average_pool_upsampler(kernel_size=kernel)
-            for  kernel in kernel_list_futrue
-        ])
-        freq_range_list_futrue = [(0,15),(0,40)]
-        self.fourier_mask_futrue = nn.ModuleList([
-            DonwSample_Fourier(freq_range=freq_range)
-            for freq_range in freq_range_list_futrue
-        ])
+        # self.avg_poolar_past =nn.ModuleList([
+        #     moving_avg(kernel_size=kernel,stride=1)
+        #     for kernel in kernel_list_past
+        # ])
+        # freq_range_list_past = [(0,15),(0,40)]
+        # self.fourier_mask_past = nn.ModuleList([
+        #     DonwSample_Fourier(freq_range=freq_range)
+        #     for freq_range in freq_range_list_past
+        # ])
+        #
+        # kernel_list_futrue=[2,8]
+        # self.avg_poolar_futrue =nn.ModuleList([
+        #     Average_pool_upsampler(kernel_size=kernel)
+        #     for  kernel in kernel_list_futrue
+        # ])
+        # freq_range_list_futrue = [(0,15),(0,40)]
+        # self.fourier_mask_futrue = nn.ModuleList([
+        #     DonwSample_Fourier(freq_range=freq_range)
+        #     for freq_range in freq_range_list_futrue
+        # ])
 
 
 

@@ -12,7 +12,7 @@ from gluonts.dataset.multivariate_grouper import MultivariateGrouper
 from gluonts.dataset.repository.datasets import dataset_recipes, get_dataset,get_download_path
 from gluonts.evaluation.backtest import make_evaluation_predictions
 from gluonts.evaluation import MultivariateEvaluator
-from multi_gran_generator import creat_coarse_data, creat_coarse_data_elec
+from multi_gran_generator import creat_coarse_data, creat_coarse_data_elec, creat_fourier_coarse_data
 from mgtsd_estimator import mgtsdEstimator
 # from src.time_grad_estimator import TimeGradEstimator
 from trainer import Trainer
@@ -60,6 +60,13 @@ def parse_args():
                         help='the share ratio list, 1_0.9, means that for the second granularity, 90% of the diffusion steps are shared with the finest granularity.')
     parser.add_argument('--weight_list', type=str, default="0.9_0.1",
                         help='the weight list, 0.9_0.1 means that the weight for the first granularity is 0.9 and the weight for the second granularity is 0.1.')
+
+
+    parser.add_argument('--freq_ranges', type=str, default="0,30_0,60",
+                        help='freq_ranges')
+
+
+
     parser.add_argument('--run_num', type=str, default="1",
                         help='the index of the run, used for the result file name')
     parser.add_argument('--wandb_space', type=str,
@@ -116,6 +123,9 @@ mg_dict = [float(i) for i in str(args.mg_dict).split('_')]
 print(f"mg_dict:{mg_dict}")
 share_ratio_list = [float(i) for i in str(args.share_ratio_list).split('_')]
 weight_list = [float(i) for i in str(args.weight_list).split('_')]
+freq_ranges = [tuple(map(int, pair.split(','))) for pair in args.freq_ranges.split('_')]
+
+# freq_ranges = [tuple(i) for i in str(args.freq_ranges).split('_')]
 weights = weight_list
 print(f"share_ratio_list:{share_ratio_list}")
 learning_rate = args.learning_rate
@@ -159,7 +169,9 @@ else:
     dataset_test = test_grouper(test_data)
 
 dataset_train = train_grouper(train_data)
-
+# freq_ranges = [(0, 30)]
+data_train, data_test = creat_fourier_coarse_data(dataset_train=dataset_train,
+                                               dataset_test=dataset_test,fourier_index_dict=freq_ranges)
 # if dataset_name == 'elec':
 #     data_train, data_test = creat_coarse_data_elec(dataset_train=dataset_train,
 #                                                    dataset_test=dataset_test,
@@ -169,7 +181,10 @@ dataset_train = train_grouper(train_data)
 #                                               dataset_test=dataset_test,
 #
 #                                               mg_dict=mg_dict)
-data_train, data_test = dataset_train,dataset_test
+# data_train, data_test = dataset_train,dataset_test
+
+
+
 print("================================================")
 print("initlize the estimator")
 

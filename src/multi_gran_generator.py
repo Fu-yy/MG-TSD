@@ -1,4 +1,70 @@
 import numpy as np
+import torch
+
+
+def fourier_mask_subband(x, freq_range: tuple):
+    """
+    给定 2D 实数序列 x，做 rFFT，然后只保留 [freq_range[0], freq_range[1]) 的频率成分，
+    最后 iFFT 回时域并返回。
+
+    freq_range 以频谱下标来表示区间。例如 (0, 10) 表示只保留前 0~9 的频率 bin。
+    """
+    B, T = x.shape
+    X_f = np.fft.rfft(x,axis=1)  # [freq_bins], freq_bins = floor(seq_len/2) + 1
+
+    # 构造掩码
+    mask = np.zeros_like(X_f)
+    start, end = freq_range
+    end = min(end, T // 2 + 1)  # 防止越界
+    start = min(start, T // 2 + 1)  # 防止越界
+    mask[:,start:end] = 1.0
+
+    X_f_masked = X_f * mask
+    # irfft 需要指定 n=seq_len 才能恢复到原长度
+    x_recover = np.fft.irfft(X_f_masked, n=T,axis=1)
+    return x_recover
+
+def creat_fourier_coarse_data(fourier_index_dict, dataset_train, dataset_test):
+    train_coarse_array_multi = []
+    dataset_train_coarse = []
+    dataDict_train_coarse = {}
+
+    for gran in fourier_index_dict:
+
+
+        for dataDict_train in dataset_train:
+            # reshape the array to have n columns
+
+            train_target_item = dataDict_train['target']
+            fourier_res_train = fourier_mask_subband(train_target_item, freq_range=gran)
+            train_coarse_array_multi.append(fourier_res_train)
+
+
+    train_coarse_array_multi = np.concatenate(train_coarse_array_multi,axis=0)
+    dataDict_train_coarse['target'] = np.array(train_coarse_array_multi)
+    dataDict_train_coarse['feat_static_cat'] = dataDict_train['feat_static_cat']
+    dataDict_train_coarse['start'] = dataDict_train['start']
+    dataset_train_coarse.append(dataDict_train_coarse)
+
+    # dataDict_test_coarse = {}
+    # create a new dictionary for the coarse-grained dataset, should be put under the for loop
+    dataset_test_coarse = []
+
+    for dataDict in dataset_test:
+        dataDict_test_coarse = {}  # create a new dictionar
+        test_coarse_array_multi = []
+        for gran in fourier_index_dict:
+            item=dataDict['target']
+            test_coarse_array_multi=fourier_mask_subband(item, freq_range=gran)
+            dataDict_test_coarse['target'] = np.array(test_coarse_array_multi)
+            dataDict_test_coarse['feat_static_cat'] = dataDict['feat_static_cat']
+            dataDict_test_coarse['start'] = dataDict['start']
+        dataset_test_coarse.append(dataDict_test_coarse)
+
+    data_train = dataset_train_coarse
+    data_test = dataset_test_coarse
+
+    return data_train, data_test
 
 
 def creat_coarse_data(mg_dict, dataset_train, dataset_test):
