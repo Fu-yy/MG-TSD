@@ -1,4 +1,3 @@
-from torch.nn.modules import loss
 from typing import List, Optional, Tuple, Union
 
 import torch
@@ -7,7 +6,7 @@ import torch.nn as nn
 from gluonts.core.component import validated
 
 from Freq_diffusion import FrequencyDiffusion
-from down_up_fourier_pool import Average_pool_upsampler, DonwSample_Fourier, moving_avg
+from down_up_fourier_pool import DonwSample_Fourier
 
 from manifold_diffusion import SphereDiffusion
 from ode_diffusion import OdeGaussianDiffusion
