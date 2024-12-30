@@ -74,20 +74,20 @@ class mgtsdTrainingNetwork(nn.Module):
 
         self.cell_type = cell_type
         rnn_cls = {"LSTM": nn.LSTM, "GRU": nn.GRU}[cell_type]  # rnn class
-        # self.rnn = nn.ModuleList([rnn_cls(
-        #     input_size=input_size,
-        #     hidden_size=num_cells,
-        #     num_layers=num_layers,
-        #     dropout=dropout_rate,
-        #     batch_first=True,
-        # ) for _ in range(self.num_gran)])  # shape: (batch_size, seq_len, num_cells)
-        self.rnn = rnn_cls(
+        self.rnn = nn.ModuleList([rnn_cls(
             input_size=input_size,
             hidden_size=num_cells,
             num_layers=num_layers,
             dropout=dropout_rate,
             batch_first=True,
-        )   # shape: (batch_size, seq_len, num_cells)
+        ) for _ in range(len(self.freq_rate_list))])  # shape: (batch_size, seq_len, num_cells)
+        # self.rnn = rnn_cls(
+        #     input_size=input_size,
+        #     hidden_size=num_cells,
+        #     num_layers=num_layers,
+        #     dropout=dropout_rate,
+        #     batch_first=True,
+        # )   # shape: (batch_size, seq_len, num_cells)
 
         self.denoise_fn = EpsilonTheta(
             target_dim=target_dim,
@@ -142,9 +142,15 @@ class mgtsdTrainingNetwork(nn.Module):
             num_cells)  # projection distribution arguments
 
         self.embed_dim = 1
-        self.embed = nn.Embedding(
+        # self.embed = nn.Embedding(
+        #     num_embeddings=self.target_dim, embedding_dim=self.embed_dim
+        # )
+        self.embed = nn.ModuleList([
+            nn.Embedding(
             num_embeddings=self.target_dim, embedding_dim=self.embed_dim
         )
+            for _ in range(len(self.freq_rate_list))
+        ])
 
         if self.scaling:
             self.scaler = MeanScaler(keepdim=True)
@@ -210,6 +216,7 @@ class mgtsdTrainingNetwork(nn.Module):
         time_feat: torch.Tensor,
         target_dimension_indicator: torch.Tensor,
         unroll_length: int,
+        index: int,
         begin_state: Optional[Union[List[torch.Tensor], torch.Tensor]] = None,
     ) -> Tuple[
         torch.Tensor,
@@ -227,7 +234,7 @@ class mgtsdTrainingNetwork(nn.Module):
         ) #  lags_scaled 历史数据  128 48 411
 
         # (batch_size, target_dim, embed_dim)
-        index_embeddings = self.embed(target_dimension_indicator) # 127 137 -- 128 137 1
+        index_embeddings = self.embed[index](target_dimension_indicator) # 127 137 -- 128 137 1
 
         # (batch_size, seq_len, target_dim * embed_dim)
         repeated_index_embeddings = (
@@ -241,7 +248,7 @@ class mgtsdTrainingNetwork(nn.Module):
             (input_lags, repeated_index_embeddings, time_feat), dim=-1) # 将input_lags（滞后子序列）、repeated_index_embeddings（目标维度的嵌入向量）和 time_feat（时间特征）沿着最后一个维度拼接在一起，形成最终的输入张量 inputs。 #  128 48 552
 
         # unroll encoder
-        outputs, state = self.rnn(inputs, begin_state)  ##  128 48 552 --> 128 48 128 -- 2 128 128
+        outputs, state = self.rnn[index](inputs, begin_state)  ##  128 48 552 --> 128 48 128 -- 2 128 128
         return outputs, state, lags_scaled, inputs
 
     def unroll_encoder(
@@ -252,6 +259,7 @@ class mgtsdTrainingNetwork(nn.Module):
         past_is_pad: torch.Tensor,
         future_time_feat: Optional[torch.Tensor],
         future_target_cdf,
+        index,
         target_dimension_indicator: torch.Tensor,
     ) -> Tuple[
         torch.Tensor,
@@ -312,6 +320,7 @@ class mgtsdTrainingNetwork(nn.Module):
             target_dimension_indicator=target_dimension_indicators,
             unroll_length=subsequences_length,
             begin_state=None,
+            index=index
         )
             # outputs.append(output)
             # states.append(state)
@@ -420,7 +429,7 @@ class mgtsdTrainingNetwork(nn.Module):
         loss_list = []
 
         # for freq_range in range(len(self.freq_rate_list)):
-        for fourer_mask_layer in self.fourier_mask_futrue:
+        for index, fourer_mask_layer in enumerate(self.fourier_mask_futrue):
             # unroll the decoder in "training mode", i.e. by providing future data
             past_target_cdf_fourier = fourer_mask_layer(past_target_cdf)
             future_target_cdf_fourier = fourer_mask_layer(future_target_cdf)
@@ -433,6 +442,7 @@ class mgtsdTrainingNetwork(nn.Module):
                 future_time_feat=future_time_feat,
                 future_target_cdf=future_target_cdf_fourier,
                 target_dimension_indicator=target_dimension_indicator,
+                index=index
             )  # rnn_outputs -- 2* （128 48 128）  scale -- 128 1 274
 
             # put together target sequence
@@ -503,6 +513,7 @@ class mgtsdPredictionNetwork(mgtsdTrainingNetwork):
         target_dimension_indicator: torch.Tensor,
         time_feat: torch.Tensor,
         scale: torch.Tensor,
+        index,
         begin_states: Union[List[torch.Tensor], torch.Tensor],
         # share_ratio_list: Union[List[torch.Tensor], torch.Tensor],
     ) -> torch.Tensor:
@@ -568,6 +579,7 @@ class mgtsdPredictionNetwork(mgtsdTrainingNetwork):
                 time_feat=repeated_time_feat[:, k: k + 1, ...],
                 target_dimension_indicator=repeated_target_dimension_indicator,
                 unroll_length=1,
+                index=index
             )
             distr_args = self.distr_args(rnn_outputs)
             new_samples = self.diffusion.sample(cond=distr_args,
@@ -665,7 +677,7 @@ class mgtsdPredictionNetwork(mgtsdTrainingNetwork):
             past_observed_values, 1 - past_is_pad.unsqueeze(-1)
         )
         forecast_value_list=[]
-        for fourer_mask_layer in self.fourier_mask_futrue:
+        for index, fourer_mask_layer in enumerate(self.fourier_mask_futrue):
             # unroll the decoder in "training mode", i.e. by providing future data
             past_target_cdf_fourier = fourer_mask_layer(past_target_cdf)
             # future_target_cdf_fourier = fourer_mask_layer(future_target_cdf)
@@ -678,6 +690,7 @@ class mgtsdPredictionNetwork(mgtsdTrainingNetwork):
                 future_time_feat=None,
                 future_target_cdf=None,
                 target_dimension_indicator=target_dimension_indicator,
+                index=index
             )
 
             forecast_value = self.sampling_decoder(
@@ -686,6 +699,7 @@ class mgtsdPredictionNetwork(mgtsdTrainingNetwork):
                 time_feat=future_time_feat,
                 scale=scale,
                 begin_states=begin_states,
+                index=index
                 # share_ratio_list=self.share_ratio_list,
             )
             forecast_value_list.append(forecast_value)
