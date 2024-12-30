@@ -75,6 +75,9 @@ class mgtsdEstimator(PyTorchEstimator):
         diff_steps: int = 100,
         loss_type: str = "l2",
         beta_end=0.1,
+        freq_ranges=[],
+        freq_rate_list: List[float] = [0.9,0.5],
+        freq_weight_list: List[float] = [0.9,0.1],
         beta_schedule="linear",
         residual_layers=8,
         residual_channels=8,
@@ -104,8 +107,10 @@ class mgtsdEstimator(PyTorchEstimator):
         self.dropout_rate = dropout_rate
         self.cardinality = cardinality
         self.embedding_dimension = embedding_dimension
+        self.freq_rate_list = freq_rate_list
         self.num_gran = num_gran
-
+        self.freq_ranges=freq_ranges
+        self.freq_weight_list=freq_weight_list
         self.conditioning_length = conditioning_length
         self.diff_steps = diff_steps   # diffusion steps 100
         self.loss_type = loss_type  # L1 loss or L2 loss
@@ -240,6 +245,9 @@ class mgtsdEstimator(PyTorchEstimator):
             num_layers=self.num_layers,
             num_cells=self.num_cells,
             num_gran=self.num_gran,
+            freq_rate_list=self.freq_rate_list,
+            freq_ranges =self.freq_ranges, #freq_ranges [(0,20),(0,40)]
+            freq_weight_list =self.freq_weight_list, #freq_ranges [(0,20),(0,40)]
             cell_type=self.cell_type,
             history_length=self.history_length,
             context_length=self.context_length,
@@ -284,6 +292,9 @@ class mgtsdEstimator(PyTorchEstimator):
             diff_steps=self.diff_steps,
             loss_type=self.loss_type,
             beta_end=self.beta_end,
+            freq_rate_list=self.freq_rate_list,
+            freq_ranges=self.freq_ranges,  # freq_ranges [(0,20),(0,40)]
+            freq_weight_list=self.freq_weight_list,
             beta_schedule=self.beta_schedule,
             residual_layers=self.residual_layers,
             residual_channels=self.residual_channels,

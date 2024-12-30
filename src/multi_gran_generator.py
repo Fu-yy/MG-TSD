@@ -24,6 +24,30 @@ def fourier_mask_subband(x, freq_range: tuple):
     x_recover = np.fft.irfft(X_f_masked, n=T,axis=1)
     return x_recover
 
+
+
+def fourier_mask_subband_rate(x, rete: float):
+    """
+    给定 2D 实数序列 x，做 rFFT，然后只保留 [freq_range[0], freq_range[1]) 的频率成分，
+    最后 iFFT 回时域并返回。
+
+    freq_range 以频谱下标来表示区间。例如 (0, 10) 表示只保留前 0~9 的频率 bin。
+    """
+    B, T,_ = x.shape
+    X_f = torch.fft.rfft(x,dim=1)  # [freq_bins], freq_bins = floor(seq_len/2) + 1
+
+    # 构造掩码
+    mask = torch.zeros_like(X_f)
+    start, end = 0,rete * (T // 2 + 1)
+    end = min(end, T // 2 + 1)  # 防止越界
+    start = min(start, T // 2 + 1)  # 防止越界
+    mask[:,start:end,:] = 1.0
+
+    X_f_masked = X_f * mask
+    # irfft 需要指定 n=seq_len 才能恢复到原长度
+    x_recover = torch.fft.irfft(X_f_masked, n=T,dim=1)
+    return x_recover
+
 def creat_fourier_coarse_data(fourier_index_dict, dataset_train, dataset_test):
     train_coarse_array_multi = []
     dataset_train_coarse = []

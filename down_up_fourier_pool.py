@@ -69,9 +69,9 @@ class Average_pool_upsampler(nn.Module):
 
 
 class DonwSample_Fourier(nn.Module):
-    def __init__(self,freq_range):
+    def __init__(self,rate):
         super(DonwSample_Fourier, self).__init__()
-        self.freq_range=freq_range
+        self.rate=rate
 
     def forward(self,x):
         """
@@ -84,10 +84,10 @@ class DonwSample_Fourier(nn.Module):
         X_f = torch.fft.rfft(x, dim=1)  # [freq_bins], freq_bins = floor(seq_len/2) + 1
 
         # 构造掩码
-        mask = torch.zeros_like(X_f)
-        start, end = self.freq_range
-        end = min(end, T // 2 + 1)  # 防止越界
-        start = min(start, T // 2 + 1)  # 防止越界
+        mask = torch.zeros_like(X_f,device=x.device)
+        start, end = 0,int(self.rate * (T // 2 + 1))
+        end = min(end, (T // 2) + 1)  # 防止越界
+        start = min(start, (T // 2) + 1)  # 防止越界
         mask[:, start:end, :] = 1.0
 
         X_f_masked = X_f * mask

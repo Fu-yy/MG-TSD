@@ -64,6 +64,10 @@ def parse_args():
 
     parser.add_argument('--freq_ranges', type=str, default="0,30_0,60",
                         help='freq_ranges')
+    parser.add_argument('--freq_rate_list', type=str, default="0.9_0.8",
+                        help='freq_rate_list')
+    parser.add_argument('--freq_weight_list', type=str, default="0.9_0.1",
+                        help='freq_weight_list')
 
 
 
@@ -123,6 +127,8 @@ mg_dict = [float(i) for i in str(args.mg_dict).split('_')]
 print(f"mg_dict:{mg_dict}")
 share_ratio_list = [float(i) for i in str(args.share_ratio_list).split('_')]
 weight_list = [float(i) for i in str(args.weight_list).split('_')]
+freq_rate_list = [float(i) for i in str(args.freq_rate_list).split('_')]
+freq_weight_list = [float(i) for i in str(args.freq_weight_list).split('_')]
 freq_ranges = [tuple(map(int, pair.split(','))) for pair in args.freq_ranges.split('_')]
 
 # freq_ranges = [tuple(i) for i in str(args.freq_ranges).split('_')]
@@ -170,17 +176,17 @@ else:
 
 dataset_train = train_grouper(train_data)
 # freq_ranges = [(0, 30)]
-data_train, data_test = creat_fourier_coarse_data(dataset_train=dataset_train,
-                                               dataset_test=dataset_test,fourier_index_dict=freq_ranges)
-# if dataset_name == 'elec':
-#     data_train, data_test = creat_coarse_data_elec(dataset_train=dataset_train,
-#                                                    dataset_test=dataset_test,
-#                                                    mg_dict=mg_dict)
-# else:
-#     data_train, data_test = creat_coarse_data(dataset_train=dataset_train,
-#                                               dataset_test=dataset_test,
-#
-#                                               mg_dict=mg_dict)
+# data_train, data_test = creat_fourier_coarse_data(dataset_train=dataset_train,
+#                                                dataset_test=dataset_test,fourier_index_dict=freq_ranges)
+if dataset_name == 'elec':
+    data_train, data_test = creat_coarse_data_elec(dataset_train=dataset_train,
+                                                   dataset_test=dataset_test,
+                                                   mg_dict=mg_dict)
+else:
+    data_train, data_test = creat_coarse_data(dataset_train=dataset_train,
+                                              dataset_test=dataset_test,
+
+                                              mg_dict=mg_dict)
 # data_train, data_test = dataset_train,dataset_test
 
 
@@ -216,6 +222,9 @@ estimator = mgtsdEstimator(
     freq=dataset.metadata.freq,
     loss_type='l2',
     scaling=True,
+    freq_ranges=freq_ranges,
+    freq_rate_list=freq_rate_list,
+    freq_weight_list=freq_weight_list,
     diff_steps=diff_steps,
     share_ratio_list=share_ratio_list,
     beta_end=0.1,
