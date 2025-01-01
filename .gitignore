@@ -16,6 +16,8 @@ __pycache__/
 build/
 datasets/
 scripts/log/
+src/results/
+src/results
 scripts/log
 scripts/result/
 scripts/result
