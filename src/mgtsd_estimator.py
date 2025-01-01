@@ -317,7 +317,7 @@ class mgtsdEstimator(PyTorchEstimator):
             input_names=input_names,
             prediction_net=prediction_network,
             batch_size=self.trainer.batch_size,
-            freq=self.freq,
+            # freq=self.freq,
             prediction_length=self.prediction_length,
             device=device,
         )

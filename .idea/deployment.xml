@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="PublishConfigData" autoUpload="On explicit save action" remoteFilesAllowedToDisappearOnAutoupload="false" autoUploadExternalChanges="true">
+  <component name="PublishConfigData" autoUpload="Always" remoteFilesAllowedToDisappearOnAutoupload="false" autoUploadExternalChanges="true">
     <serverData>
       <paths name="1120231440@172.23.10.23:9933 password">
         <serverdata>
@@ -100,6 +100,13 @@
           </mappings>
         </serverdata>
       </paths>
+      <paths name="root@connect.beijinga.seetacloud.com:40374 password">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/root/python/MG-TSD40-autodl" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
       <paths name="test_MICN_1455_1120231455@172.23.10.23:9933 password (2)">
         <serverdata>
           <mappings>
@@ -115,6 +122,6 @@
         </serverdata>
       </paths>
     </serverData>
-    <option name="myAutoUpload" value="ON_EXPLICIT_SAVE" />
+    <option name="myAutoUpload" value="ALWAYS" />
   </component>
 </project>

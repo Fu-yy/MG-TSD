@@ -6,8 +6,8 @@ from functools import partial
 import torch.nn.functional as F
 
 from gluonts.core.component import validated
-from gluonts.torch.modules.distribution_output import DistributionOutput
-# from gluonts.torch.distributions.distribution_output import DistributionOutput
+# from gluonts.torch.modules.distribution_output import DistributionOutput
+from gluonts.torch.distributions.distribution_output import DistributionOutput
 from typing import Tuple
 import copy
 

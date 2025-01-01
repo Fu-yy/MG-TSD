@@ -8,8 +8,8 @@ from gluonts.core.component import validated
 from Freq_diffusion import FrequencyDiffusion
 from down_up_fourier_pool import DonwSample_Fourier
 
-from manifold_diffusion import SphereDiffusion
-from ode_diffusion import OdeGaussianDiffusion
+# from manifold_diffusion import SphereDiffusion
+# from ode_diffusion import OdeGaussianDiffusion
 from utils import weighted_average, MeanScaler, NOPScaler
 # from module import GaussianDiffusion,DiffusionOutput
 from mgtsd_module import GaussianDiffusion, DiffusionOutput
@@ -106,29 +106,29 @@ class mgtsdTrainingNetwork(nn.Module):
             share_ratio_list=share_ratio_list,
             beta_schedule=beta_schedule,
         )  # diffusion network
-        self.sphere_diffusion = SphereDiffusion(
-            denoise_fn=self.denoise_fn,
-            input_size=target_dim,
-            dim=target_dim,
-            num_timesteps=diff_steps,
-            loss_type=loss_type,
-            # share ratio, new argument to control diffusion and sampling
-        )  # diffusion network
+        # self.sphere_diffusion = SphereDiffusion(
+        #     denoise_fn=self.denoise_fn,
+        #     input_size=target_dim,
+        #     dim=target_dim,
+        #     num_timesteps=diff_steps,
+        #     loss_type=loss_type,
+        #     # share ratio, new argument to control diffusion and sampling
+        # )  # diffusion network
 
-        self.ode_diffusion = OdeGaussianDiffusion(
-            denoise_fn=self.denoise_fn,
-            input_size=target_dim,
-            loss_type=loss_type,
-            # share ratio, new argument to control diffusion and sampling
-        )  # diffusion network
+        # self.ode_diffusion = OdeGaussianDiffusion(
+        #     denoise_fn=self.denoise_fn,
+        #     input_size=target_dim,
+        #     loss_type=loss_type,
+        #     # share ratio, new argument to control diffusion and sampling
+        # )  # diffusion network
 
-        self.freq_diffusion = FrequencyDiffusion(
-            denoise_net=self.denoise_fn,
-            seq_len=48,
-            dim=target_dim,
-            loss_type=loss_type,
-            # share ratio, new argument to control diffusion and sampling
-        )  # diffusion network
+        # self.freq_diffusion = FrequencyDiffusion(
+        #     denoise_net=self.denoise_fn,
+        #     seq_len=48,
+        #     dim=target_dim,
+        #     loss_type=loss_type,
+        #     # share ratio, new argument to control diffusion and sampling
+        # )  # diffusion network
 
         # self.diffusion = self.freq_diffusion
 

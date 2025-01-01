@@ -8,7 +8,7 @@ from torch import nn
 import torch.nn.functional as F
 
 # 需要安装: pip install torchdiffeq
-from torchdiffeq import odeint  # 核心接口
+# from torchdiffeq import odeint  # 核心接口
 
 
 def default(val, d):

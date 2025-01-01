@@ -1,9 +1,16 @@
+import numpy as np
 import torch
 import torch.nn.functional as F
 import torch.fft as fft
 import matplotlib.pyplot as plt
 from torch import nn
+import matplotlib as mpl
 
+mpl.rcParams['font.family'] = 'SimHei'
+plt.rcParams['axes.unicode_minus'] = False   # 步骤二（解决坐标轴负数的负号显示问题）
+
+
+# 哪里需要显示中文就在哪里设置
 
 class Average_pool_upsampler(nn.Module):
     def __init__(self,kernel_size):
@@ -110,8 +117,59 @@ def fourier_mask_subband(x: torch.Tensor, freq_range: tuple) -> torch.Tensor:
     # irfft 需要指定 n=seq_len 才能恢复到原长度
     x_recover = fft.irfft(X_f_masked, n=T,dim=1)
     return x_recover
+def fourier_mask_subband_invert(x: torch.Tensor, freq_range: tuple) -> torch.Tensor:
+    """
+    给定 2D 实数序列 x，做 rFFT，然后只保留 [freq_range[0], freq_range[1]) 的频率成分，
+    最后 iFFT 回时域并返回。
+
+    freq_range 以频谱下标来表示区间。例如 (0, 10) 表示只保留前 0~9 的频率 bin。
+    """
+    B, T, N = x.shape
+    X_f = fft.rfft(x,dim=1)  # [freq_bins], freq_bins = floor(seq_len/2) + 1
+
+    # 构造掩码
+    mask = torch.zeros_like(X_f)
+    start, end = freq_range
+    end = min(end, T // 2 + 1)  # 防止越界
+    start = min(start, T // 2 + 1)  # 防止越界
+    mask[:,start:,:] = 1.0
+
+    X_f_masked = X_f * mask
+    # irfft 需要指定 n=seq_len 才能恢复到原长度
+    x_recover = fft.irfft(X_f_masked, n=T,dim=1)
+    return x_recover
 
 
+def gaussian_noise(shape, mean=0.0, std=1.0):
+    """
+    生成高斯噪声。
+
+    参数:
+    - shape: 噪声的形状 (如: [batch_size, num_features])。
+    - mean: 噪声的均值，默认 0。
+    - std: 噪声的标准差，默认 1。
+
+    返回:
+    - np.ndarray: 高斯噪声数组。
+    """
+    return np.random.normal(mean, std, shape)
+
+
+def add_noise(data, t, alpha_t):
+    """
+    为数据添加高斯噪声。
+
+    参数:
+    - data: 原始数据 (x0)。
+    - t: 时间步 (0 到 T)。
+    - alpha_t: 时间相关的噪声强度参数。
+
+    返回:
+    - xt: 添加噪声后的数据。
+    """
+    noise = gaussian_noise(data.shape)
+    xt = torch.sqrt(alpha_t) * data + torch.sqrt(1 - alpha_t) * noise
+    return xt, noise
 def extract_multiscale_signals(x: torch.Tensor, num_scales: int = 5,mask_begin_zero:bool = True) -> torch.Tensor:
     B, T, N = x.shape
     X_f = torch.fft.rfft(x, dim=1)  # [B, freq_bins, N]
@@ -141,12 +199,55 @@ def extract_multiscale_signals(x: torch.Tensor, num_scales: int = 5,mask_begin_z
     return scale_signals
 
 
+
+def plot_fourier_masked_signals(data_list, titles, x_orig, figsize=(10, 8), sharex=True,dpi=300,save_path='test.png'):
+    """
+    Plots multiple subplots for Fourier masked signals.
+
+    Args:
+        data_list (list): A list of lists, where each inner list contains the Fourier masked signals for one subplot.
+        titles (list): A list of titles for each subplot.
+        x_orig (torch.Tensor or numpy.ndarray): The original signal for comparison, should be 1D.
+        figsize (tuple): Size of the figure. Default is (10, 8).
+        sharex (bool): Whether to share the x-axis among subplots. Default is True.
+
+    Returns:
+        None
+    """
+    num_subplots = len(data_list)
+    fig, axes = plt.subplots(num_subplots, 1, figsize=figsize, sharex=sharex)
+
+    if num_subplots == 1:
+        axes = [axes]  # Ensure axes is iterable when there's only one subplot
+
+    for idx, (signals, title) in enumerate(zip(data_list, titles)):
+        axes[idx].plot(x_orig, label='Original', color='k', linestyle='--')
+        for i, signal in enumerate(signals):
+            signal = signal.squeeze(0).squeeze(-1)
+            fr_str = f"{i}"
+            axes[idx].plot(signal, label=f'Fourier Mask freq={fr_str}')
+        axes[idx].set_title(title)
+        axes[idx].legend()
+        axes[idx].grid(True)
+
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=dpi, bbox_inches='tight')  # Save the figure as a high-resolution file
+    print(f"Figure saved to {save_path}")
+    plt.show()
+    plt.close()
+
 if __name__ == "__main__":
     # ======================
     # 1) 生成一个测试信号 (可替换成你的真实数据)
     # ======================
     torch.manual_seed(0)
-    seq_len = 256
+    seq_len = 128
+    alpha=0.1
+    # alpha=0.3
+    # alpha=0.5
+    # alpha=0.7
+    # alpha=0.9
+
     # 人工构造一个混合波，含有多种频率成分
     t = torch.linspace(0, 2 * 3.14159, seq_len)
     # 低频 + 高频 + 噪声
@@ -155,67 +256,133 @@ if __name__ == "__main__":
     # ======================
     # 2) 多种平均池化 + 上采样
     # ======================
-    kernel_sizes = [2, 4, 8]
-    pooled_upsampled_signals = []
-    for k in kernel_sizes:
-        x_pu = average_pool_and_upsample(x_orig, kernel_size=k, upsample_mode='linear')
-        pooled_upsampled_signals.append(x_pu)
+    # kernel_sizes = [2, 4, 8]
+    # pooled_upsampled_signals = []
+    # for k in kernel_sizes:
+    #     x_pu = average_pool_and_upsample(x_orig, kernel_size=k, upsample_mode='linear')
+    #     pooled_upsampled_signals.append(x_pu)
 
     # ======================
     # 3) 傅里叶掩码 (示例：截取不同范围的低频)
     #    这里简单把频域分为三段: [0, 10), [0, 20), [0, 40)
     #    表示只保留 0~9, 0~19, 0~39 这几段低频
     # ======================
-    x_orig_torch = x_orig.unsqueeze(0).unsqueeze(-1)
-    res_from_zero = extract_multiscale_signals(x_orig_torch,num_scales=3,mask_begin_zero=True)
-    res_from_middle = extract_multiscale_signals(x_orig_torch,num_scales=3,mask_begin_zero=False)
+    # x_orig_torch = x_orig.unsqueeze(0).unsqueeze(-1)
+    # res_from_zero = extract_multiscale_signals(x_orig_torch,num_scales=3,mask_begin_zero=True)
+    # res_from_middle = extract_multiscale_signals(x_orig_torch,num_scales=3,mask_begin_zero=False)
+
+    index_end = seq_len  //2 + 1
+    index_end_int1  = int(index_end*0.1)
+    index_end_int4  = int(index_end*0.4)
+    index_end_int7  = int(index_end*0.7)
+    index_end_int9  = int(index_end*0.9)
+
+    x_orig_tensor = x_orig.unsqueeze(0).unsqueeze(-1)
+    freq_ranges = [(0, index_end_int1), (0, index_end_int4), (0, index_end_int7), (0, index_end_int9)]
+    freq_ranges = [(0, index_end_int1), (0, index_end_int9)]
+    fourier_masked_signals = []
+    for fr in freq_ranges:
+        x_fm = fourier_mask_subband(x_orig_tensor, freq_range=fr)
+        fourier_masked_signals.append(x_fm)
 
 
+    freq_ranges = [(0, index_end_int1), (index_end_int1, index_end_int4), (index_end_int4, index_end_int7),(index_end_int7,index_end_int9)]
+    freq_ranges = [(0, index_end_int1), (index_end_int4, index_end_int7)]
+    fourier_masked_signals_split = []
+    for fr in freq_ranges:
+        x_fm = fourier_mask_subband(x_orig_tensor, freq_range=fr)
+
+        fourier_masked_signals_split.append(x_fm)
+
+    freq_ranges = [(-index_end_int1, 0), (-index_end_int4, 0), (-index_end_int7, 0), (-index_end_int9, 0)]
+    freq_ranges = [(-index_end_int1, 0), (-index_end_int7, 0)]
+    fourier_masked_signals_split_invert = []
+    for fr in freq_ranges:
+        x_fm = fourier_mask_subband_invert(x_orig_tensor, freq_range=fr)
+
+        fourier_masked_signals_split_invert.append(x_fm)
 
 
-    # freq_ranges = [(0, 10), (0, 20), (0, 40)]
-    # fourier_masked_signals = []
-    # for fr in res_from_zero:
-    #     x_fm = fourier_mask_subband(x_orig, freq_range=fr)
-    #     fourier_masked_signals.append(x_fm)
-    # freq_ranges = [(0, 10), (11, 20), (21, 40)]
-    # fourier_masked_signals_split = []
-    # for fr in freq_ranges:
-    #     x_fm = fourier_mask_subband(x_orig, freq_range=fr)
-    #     fourier_masked_signals_split.append(x_fm)
 
     # ======================
     # 4) 画图对比
     # ======================
-    fig, axes = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
 
-    # --- (a) 平均池化 + 上采样 对比 ---
-    axes[0].plot(x_orig.detach().numpy(), label='Original', color='k', linestyle='--')
-    for i, x_pu in enumerate(pooled_upsampled_signals):
-        axes[0].plot(x_pu.detach().numpy(), label=f'Pool+Upsample k={kernel_sizes[i]}')
-    axes[0].set_title("平均池化 + 上采样 不同 kernel_size 对比")
-    axes[0].legend()
-    axes[0].grid(True)
+    data_list = [
+        fourier_masked_signals,
+        fourier_masked_signals_split,
+        fourier_masked_signals_split_invert
+    ]
 
-    # --- (b) 傅里叶掩码 对比 ---
-    axes[1].plot(x_orig.detach().numpy(), label='Original', color='k', linestyle='--')
-    for i, x_fm in enumerate(res_from_zero):
-        x_fm = x_fm.squeeze(0).squeeze(-1)
-        fr_str = f"{i}"
-        axes[1].plot(x_fm.detach().numpy(), label=f'Fourier Mask freq={fr_str}')
-    axes[1].set_title("傅里叶掩码 不同低频范围 对比")
-    axes[1].legend()
-    axes[1].grid(True)
-    # --- (c) 傅里叶掩码 平均分 对比 ---
-    axes[2].plot(x_orig.detach().numpy(), label='Original', color='k', linestyle='--')
-    for i, x_fm in enumerate(res_from_middle):
-        fr_str = f"{i}"
-        x_fm = x_fm.squeeze(0).squeeze(-1)
+    titles = [
+        "傅里叶掩码 不同低频范围 对比",
+        "傅里叶掩码 对比",
+        "傅里叶掩码 平均分 对比"
+    ]
 
-        axes[2].plot(x_fm.detach().numpy(), label=f'Fourier Mask freq={fr_str}')
-    axes[2].set_title("傅里叶掩码 不同低频范围 对比")
-    axes[2].legend()
-    axes[2].grid(True)
+    plot_fourier_masked_signals(data_list, titles, x_orig,dpi=600,save_path='01.长度为_'+str(seq_len)+'_原始数据分解后的，最上方是前百分之多少，中间的是分段，最下面的是后百分之多少.png')
 
-    plt.tight_layout()
-    plt.show()
+    alpha_t = torch.tensor(alpha)
+    # 添加噪声
+    noisy_data, noise = add_noise(x_orig_tensor, t=0, alpha_t=alpha_t)
+
+    list_01=[]
+    list_01_sum=0
+    list_01_noise=[]
+    list_02=[]
+    list_02_sum=0
+
+    list_02_noise=[]
+    list_03=[]
+    list_03_sum=0
+
+    list_03_noise=[]
+    for fourier_masked_signals_item,fourier_masked_signals_split_item,fourier_masked_signals_split_invert_item in zip(fourier_masked_signals, fourier_masked_signals_split,fourier_masked_signals_split_invert):
+        i01, noise01 = add_noise(fourier_masked_signals_item, t=0, alpha_t=alpha_t)
+        i02, noise02 = add_noise(fourier_masked_signals_split_item, t=0, alpha_t=alpha_t)
+        i03, noise03 = add_noise(fourier_masked_signals_split_invert_item, t=0, alpha_t=alpha_t)
+        list_01.append(i01)
+        list_01_noise.append(noise01)
+        list_02.append(i02)
+        list_02_noise.append(noise02)
+        list_03.append(i03)
+        list_03_noise.append(noise03)
+        list_01_sum += i01
+        list_02_sum += i02
+        list_03_sum += i03
+
+    titles_fourier_noise = [
+        "傅里叶掩码 不同低频范围 对比 加噪后",
+        "傅里叶掩码 对比  加噪后",
+        "傅里叶掩码 平均分 对比  加噪后"
+    ]
+
+    data_list_fourier_noise=[list_01,list_02,list_03]
+    noisy_data01 = noisy_data.squeeze(0).squeeze(-1)
+
+    plot_fourier_masked_signals(data_list_fourier_noise, titles_fourier_noise, noisy_data01,dpi=600,save_path='02.长度为_'+str(seq_len)+'噪声alpha为'+str(alpha)+'_原始数据分解后的，最上方是前百分之多少，中间的是分段，最下面的是后百分之多少.png')
+
+
+    noise_list=[list_01,list_02,list_03]
+    titles_noise = [
+        "傅里叶掩码 不同低频范围 对比 噪声",
+        "傅里叶掩码 对比  噪声",
+        "傅里叶掩码 平均分 对比  噪声"
+    ]
+
+    noise01 = noise.squeeze(0).squeeze(-1)
+
+    plot_fourier_masked_signals(noise_list, titles_noise, noise01,dpi=600,save_path='03.长度为_'+str(seq_len)+'噪声alpha为'+str(alpha)+'_原始数据分解后的，最上方是前百分之多少，中间的是分段，最下面的是后百分之多少.png')
+
+    titles_noise = [
+        "相加",
+    ]
+
+    sum_noise = [[torch.stack(list_01,dim=-1).mean(-1),torch.stack(list_02,dim=-1).mean(-1),torch.stack(list_03,dim=-1).mean(-1)]]
+    plot_fourier_masked_signals(sum_noise, titles_noise, noisy_data01,dpi=600,save_path='04.长度为_'+str(seq_len)+'噪声alpha为'+str(alpha)+'_原始数据分解后的，最上方是前百分之多少，中间的是分段，最下面的是后百分之多少,三部分噪声加和.png')
+
+
+
+
+
+

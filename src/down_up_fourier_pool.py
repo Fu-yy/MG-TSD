@@ -88,7 +88,11 @@ class DonwSample_Fourier(nn.Module):
         start, end = 0,int(self.rate * (T // 2 + 1))
         end = min(end, (T // 2) + 1)  # 防止越界
         start = min(start, (T // 2) + 1)  # 防止越界
-        mask[:, start:end, :] = 1.0
+        if end < 0:
+            mask[:, end:, :] = 1.0
+
+        else:
+            mask[:, start:end, :] = 1.0
 
         X_f_masked = X_f * mask
         # irfft 需要指定 n=seq_len 才能恢复到原长度
