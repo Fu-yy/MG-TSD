@@ -237,6 +237,36 @@ def plot_fourier_masked_signals(data_list, titles, x_orig, figsize=(10, 8), shar
     plt.close()
 
 if __name__ == "__main__":
+
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+
+    def visualize_masks(rate, temperature, freq_bins=100):
+        freq_indices = np.arange(freq_bins)
+        cutoff = rate * (freq_bins - 1)
+
+        # 全一掩码
+        all_one_mask = np.ones(freq_bins)
+
+        # 平滑掩码
+        smooth_mask = 1 / (1 + np.exp((cutoff - freq_indices) * temperature))
+
+        plt.figure(figsize=(10, 4))
+        plt.plot(freq_indices, all_one_mask, label='All-One Mask')
+        plt.plot(freq_indices, smooth_mask, label='Smooth Mask', color='orange')
+        plt.axvline(x=cutoff, color='green', linestyle='--', label='Cutoff Frequency')
+        plt.xlabel('Frequency Index')
+        plt.ylabel('Mask Value')
+        plt.title('All-One Mask vs. Smooth Mask')
+        plt.legend()
+        plt.grid(True)
+        plt.show()
+
+
+    # 示例
+    visualize_masks(rate=0.2, temperature=10.0)
+
     # ======================
     # 1) 生成一个测试信号 (可替换成你的真实数据)
     # ======================

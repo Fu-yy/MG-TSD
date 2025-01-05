@@ -100,6 +100,59 @@ class DonwSample_Fourier(nn.Module):
         return x_recover
 
 
+class DownSample_Fourier_Learnable(nn.Module):
+    def __init__(self, initial_rate=0.2, temperature=10.0):
+        """
+        初始化可学习的傅里叶下采样模块。
+
+        参数:
+        - initial_rate (float): 初始的下采样比例，范围在 [0, 1]。
+        - temperature (float): 控制 Sigmoid 函数的斜率，用于生成更接近二值的掩码。
+        """
+        super(DownSample_Fourier_Learnable, self).__init__()
+        # 使用一个参数 theta，通过 Sigmoid 函数映射到 [0, 1] 作为 rate
+        self.theta = nn.Parameter(torch.tensor(initial_rate))
+        self.temperature = temperature  # 温度参数用于控制掩码的锐利度
+
+    def forward(self, x):
+        """
+        前向传播，分离低频和高频部分。
+
+        参数:
+        - x (torch.Tensor): 输入数据，形状为 [B, T, N]
+
+        返回:
+        - x_low (torch.Tensor): 低频部分，形状为 [B, T, N]
+        - x_high (torch.Tensor): 高频部分，形状为 [B, T, N]
+        """
+        B, T, N = x.shape
+        X_f = torch.fft.rfft(x, dim=1)  # [B, freq_bins, N]
+        freq_bins = X_f.shape[1]
+
+        # 计算当前的 rate，确保在 [0, 1] 范围内
+        rate = torch.sigmoid(self.theta)  # [1]
+
+        # 创建频率索引
+        freq_indices = torch.arange(freq_bins, device=x.device).float()
+
+        # 计算掩码的中心点
+        cutoff = rate * (freq_bins - 1)
+
+        # 使用 Sigmoid 函数生成平滑掩码
+        mask = torch.sigmoid((cutoff - freq_indices) * self.temperature)
+        mask = mask.unsqueeze(-1)  # [freq_bins, 1]
+
+        # 扩展掩码到批次和特征维度
+        mask = mask.unsqueeze(0).expand(B, -1, N)  # [B, freq_bins, N]
+
+        # 应用掩码
+        X_f_masked = X_f * mask  # 低频逐渐保留，高频逐渐抑制
+
+        # 逆傅里叶变换回时域
+        x_low = torch.fft.irfft(X_f_masked, n=T, dim=1)
+        x_high = x - x_low  # 高频部分
+
+        return x_low, x_high
 def fourier_mask_subband(x: torch.Tensor, freq_range: tuple) -> torch.Tensor:
     """
     给定 2D 实数序列 x，做 rFFT，然后只保留 [freq_range[0], freq_range[1]) 的频率成分，

@@ -6,7 +6,7 @@ import torch.nn as nn
 from gluonts.core.component import validated
 
 from Freq_diffusion import FrequencyDiffusion
-from down_up_fourier_pool import DonwSample_Fourier
+from down_up_fourier_pool import DonwSample_Fourier, DownSample_Fourier_Learnable
 
 # from manifold_diffusion import SphereDiffusion
 # from ode_diffusion import OdeGaussianDiffusion
@@ -181,6 +181,8 @@ class mgtsdTrainingNetwork(nn.Module):
             DonwSample_Fourier(rate=rate_item)
             for rate_item in freq_rate_list
         ])
+        self.fourier_mask_futrue_learnable = DownSample_Fourier_Learnable(initial_rate=0.2,temperature=10.0)
+
 
 
 
