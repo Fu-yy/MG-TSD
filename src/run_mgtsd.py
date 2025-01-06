@@ -49,8 +49,10 @@ def parse_args():
     parser.add_argument('--learning_rate', type=float, default=1e-05)
     parser.add_argument('--num_cells', type=int, default=128,
                         help='number of cells in the rnn')
-    parser.add_argument('--diff_steps', type=int,
-                        default=100, help='diff steps')
+    parser.add_argument('--diff_steps_low', type=int,
+                        default=100, help='diff diff_steps_low')
+    parser.add_argument('--diff_steps_high', type=int,
+                        default=100, help='diff steps high')
 
     parser.add_argument('--input_size', type=int, default=552,
                         help='the input size of the current dataset, which is different from the original feature size but can be calculated from the original feature size.')
@@ -71,6 +73,8 @@ def parse_args():
                         help='freq_rate_list')
     parser.add_argument('--freq_weight_list', type=str, default="0.9_0.1",
                         help='freq_weight_list')
+    parser.add_argument('--fourier_rate', type=float, default=0.5,
+                        help='fourier_rate')
 
 
 
@@ -120,7 +124,9 @@ if __name__ == '__main__':
     result_path = args.result_path
     Path(result_path).mkdir(parents=True, exist_ok=True)
     epoch = args.epoch
-    diff_steps = args.diff_steps
+    diff_steps_low = args.diff_steps_low
+    diff_steps_high = args.diff_steps_high
+    fourier_rate = args.fourier_rate
     num_gran = args.num_gran
 
     dataset_name = args.dataset
@@ -229,7 +235,9 @@ if __name__ == '__main__':
         freq_ranges=freq_ranges,
         freq_rate_list=freq_rate_list,
         freq_weight_list=freq_weight_list,
-        diff_steps=diff_steps,
+        diff_steps_low=diff_steps_low,
+        diff_steps_high=diff_steps_high,
+        fourier_rate=fourier_rate,
         share_ratio_list=share_ratio_list,
         beta_end=0.1,
         beta_schedule="linear",
@@ -361,7 +369,7 @@ if __name__ == '__main__':
 
         # test results for fine-grained dataset
 
-        filename = f"{result_path}/output_{dataset_name}_{model_name}_{mg_dict}h_{cur_gran}h_{diff_steps}_{weights}_ratio{share_ratio_list}.csv"
+        filename = f"{result_path}/output_{dataset_name}_{model_name}_{mg_dict}h_{cur_gran}h_{diff_steps_low}dl_{diff_steps_high}dh_{weights}_ratio{share_ratio_list}.csv"
         if not os.path.exists(filename):
             with open(filename, mode="a") as f:
                 f.write("epoch,model_name,CRPS,ND,NRMSE,CRPS_Sum,ND_Sum,NRMSE_Sum\n")
@@ -370,6 +378,6 @@ if __name__ == '__main__':
         with open(filename, mode="a") as f:  # append the column names to the file
             f.write(result_str)
         plot(targets_list[cur_gran_index][0], forecasts_list[cur_gran_index][0], prediction_length=dataset.metadata.prediction_length,
-             fname=f"{result_path}/plot_{dataset_name}_{model_name}_{mg_dict}h_{cur_gran}h_{diff_steps}_{weights}_ratio{share_ratio_list}.png")
+             fname=f"{result_path}/plot_{dataset_name}_{model_name}_{mg_dict}h_{cur_gran}h_{diff_steps_low}dl_{diff_steps_high}dh_{weights}_ratio{share_ratio_list}.png")
         # plot_forecast(targets_list[cur_gran_index][0], forecasts_list[cur_gran_index][0], prediction_length=dataset.metadata.prediction_length,
         #      fname=f"{result_path}/plot_{dataset_name}_{model_name}_{mg_dict}h_{cur_gran}h_{diff_steps}_{weights}_ratio{share_ratio_list}.png")

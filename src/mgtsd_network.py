@@ -6,7 +6,7 @@ import torch.nn as nn
 from gluonts.core.component import validated
 
 from Freq_diffusion import FrequencyDiffusion
-from down_up_fourier_pool import DonwSample_Fourier, DownSample_Fourier_Learnable
+from down_up_fourier_pool import DonwSample_Fourier, DownSample_Fourier_Learnable, DonwSample_Fourier_high_low
 
 # from manifold_diffusion import SphereDiffusion
 # from ode_diffusion import OdeGaussianDiffusion
@@ -33,7 +33,7 @@ class mgtsdTrainingNetwork(nn.Module):
         target_dim: int,  # target dim 1
         num_gran: int,  # the number of granularities
         conditioning_length: int,
-        diff_steps: int,  # diffusion steps 100
+        diff_steps_high: int,  # diffusion steps 100
         share_ratio_list: List[float],  # betas are shared
         freq_rate_list: List[float],  # freq_rate_list
         loss_type: str,  # L1 loss or L2 loss
@@ -44,6 +44,8 @@ class mgtsdTrainingNetwork(nn.Module):
         dilation_cycle_length: int,
         cardinality: List[int] = [1],
         embedding_dimension: int = 1,
+        diff_steps_low: int = 30,
+        fourier_rate: float = 0.5,
         freq_weight_list: List[float] = [0.9, 0.1],  # freq_weight_list
         weights: List[float] = [0.8, 0.2],
         scaling: bool = True,
@@ -56,6 +58,8 @@ class mgtsdTrainingNetwork(nn.Module):
         self.prediction_length = prediction_length
         self.context_length = context_length
         self.history_length = history_length
+        self.diff_steps_low = diff_steps_low
+        self.diff_steps_high = diff_steps_high
         self.scaling = scaling
         self.share_hidden = share_hidden
         self.weights = weights
@@ -79,7 +83,7 @@ class mgtsdTrainingNetwork(nn.Module):
             num_layers=num_layers,
             dropout=dropout_rate,
             batch_first=True,
-        ) for _ in range(len(self.freq_rate_list))])  # shape: (batch_size, seq_len, num_cells)
+        ) for _ in range(2)])  # shape: (batch_size, seq_len, num_cells)
         # self.rnn = rnn_cls(
         #     input_size=input_size,
         #     hidden_size=num_cells,
@@ -88,7 +92,14 @@ class mgtsdTrainingNetwork(nn.Module):
         #     batch_first=True,
         # )   # shape: (batch_size, seq_len, num_cells)
 
-        self.denoise_fn = EpsilonTheta(
+        self.denoise_fn_low = EpsilonTheta(
+            target_dim=target_dim,
+            cond_length=conditioning_length,
+            residual_layers=residual_layers,
+            residual_channels=residual_channels,
+            dilation_cycle_length=dilation_cycle_length,
+        )  # dinosing network
+        self.denoise_fn_high = EpsilonTheta(
             target_dim=target_dim,
             cond_length=conditioning_length,
             residual_layers=residual_layers,
@@ -96,10 +107,20 @@ class mgtsdTrainingNetwork(nn.Module):
             dilation_cycle_length=dilation_cycle_length,
         )  # dinosing network
 
-        self.diffusion = GaussianDiffusion(
-            self.denoise_fn,
+        self.diffusion_low = GaussianDiffusion(
+            self.denoise_fn_low,
             input_size=target_dim,
-            diff_steps=diff_steps,
+            diff_steps=diff_steps_high,
+            loss_type=loss_type,
+            beta_end=beta_end,
+            # share ratio, new argument to control diffusion and sampling
+            share_ratio_list=share_ratio_list,
+            beta_schedule=beta_schedule,
+        )  # diffusion network
+        self.diffusion_high = GaussianDiffusion(
+            self.denoise_fn_high,
+            input_size=target_dim,
+            diff_steps=diff_steps_low,
             loss_type=loss_type,
             beta_end=beta_end,
             # share ratio, new argument to control diffusion and sampling
@@ -133,11 +154,16 @@ class mgtsdTrainingNetwork(nn.Module):
         # self.diffusion = self.freq_diffusion
 
 
-        self.distr_output = DiffusionOutput(
-            self.diffusion, input_size=target_dim, cond_size=conditioning_length
+        self.distr_output_low = DiffusionOutput(
+            self.diffusion_low, input_size=target_dim, cond_size=conditioning_length
+        )  # distribution output
+        self.distr_output_high = DiffusionOutput(
+            self.diffusion_high, input_size=target_dim, cond_size=conditioning_length
         )  # distribution output
 
-        self.proj_dist_args = self.distr_output.get_args_proj(
+        self.proj_dist_args_low = self.distr_output_low.get_args_proj(
+            num_cells)  # projection distribution arguments
+        self.proj_dist_args_high = self.distr_output_high.get_args_proj(
             num_cells)  # projection distribution arguments
 
         self.embed_dim = 1
@@ -145,10 +171,8 @@ class mgtsdTrainingNetwork(nn.Module):
         #     num_embeddings=self.target_dim, embedding_dim=self.embed_dim
         # )
         self.embed = nn.ModuleList([
-            nn.Embedding(
-            num_embeddings=self.target_dim, embedding_dim=self.embed_dim
-        )
-            for _ in range(len(self.freq_rate_list))
+            nn.Embedding(num_embeddings=self.target_dim, embedding_dim=self.embed_dim)
+            for _ in range(2)
         ])
 
         if self.scaling:
@@ -181,7 +205,8 @@ class mgtsdTrainingNetwork(nn.Module):
             DonwSample_Fourier(rate=rate_item)
             for rate_item in freq_rate_list
         ])
-        self.fourier_mask_futrue_learnable = DownSample_Fourier_Learnable(initial_rate=0.2,temperature=10.0)
+        self.fourier_mask_future_learnable = DownSample_Fourier_Learnable(initial_rate=0.2,temperature=10.0)
+        self.fourier_mask_future_high_low = DonwSample_Fourier_high_low(rate=fourier_rate)
 
 
 
@@ -330,7 +355,7 @@ class mgtsdTrainingNetwork(nn.Module):
 
         return outputs, states, scales, lags_scaled, inputs
 
-    def distr_args(self, rnn_outputs: torch.Tensor):
+    def distr_args_low(self, rnn_outputs: torch.Tensor):
         """
         Returns the distribution of DeepVAR with respect to the RNN outputs.
 
@@ -348,7 +373,27 @@ class mgtsdTrainingNetwork(nn.Module):
         distr_args
             Distribution arguments
         """
-        (distr_args,) = self.proj_dist_args(rnn_outputs)
+        (distr_args,) = self.proj_dist_args_low(rnn_outputs)
+        return distr_args
+    def distr_args_high(self, rnn_outputs: torch.Tensor):
+        """
+        Returns the distribution of DeepVAR with respect to the RNN outputs.
+
+        Parameters
+        ----------
+        rnn_outputs
+            Outputs of the unrolled RNN (batch_size, seq_len, num_cells)
+        scale
+            Mean scale for each time series (batch_size, 1, target_dim)
+
+        Returns
+        -------
+        distr
+            Distribution instance
+        distr_args
+            Distribution arguments
+        """
+        (distr_args,) = self.proj_dist_args_high(rnn_outputs)
         return distr_args
 
     def forward(
@@ -427,73 +472,98 @@ class mgtsdTrainingNetwork(nn.Module):
         # # 划分粒度  end------------------------#####################################################################
         #
 
-        loss_list = []
+        loss_list_low = []
+        loss_list_high = []
 
-        # for freq_range in range(len(self.freq_rate_list)):
-        for index, fourer_mask_layer in enumerate(self.fourier_mask_futrue):
-            # unroll the decoder in "training mode", i.e. by providing future data
-            past_target_cdf_fourier = fourer_mask_layer(past_target_cdf)
-            future_target_cdf_fourier = fourer_mask_layer(future_target_cdf)
-
-            rnn_outputs, _, scale, _, _ = self.unroll_encoder(
-                past_time_feat=past_time_feat,
-                past_target_cdf=past_target_cdf_fourier,
-                past_observed_values=past_observed_values,
-                past_is_pad=past_is_pad,
-                future_time_feat=future_time_feat,
-                future_target_cdf=future_target_cdf_fourier,
-                target_dimension_indicator=target_dimension_indicator,
-                index=index
-            )  # rnn_outputs -- 2* （128 48 128）  scale -- 128 1 274
-
-            # put together target sequence
-            # (batch_size, seq_len, target_dim)
-            target = torch.cat(
-                (past_target_cdf_fourier[:, -self.context_length:, ...],
-                 future_target_cdf_fourier),
-                dim=1,
-            )
-            target = target/scale
-            targets = target
-
-            # specifiy the beta variance for the coarse-grained dataset,
-            # the scalars in the forward and backward(sampling)are different
-
-            rnn_outputs_2 = rnn_outputs  # outputs from multiple rnns
-            distr_args = self.distr_args(rnn_outputs_2)  # 128 48 100 * 2
+        past_target_cdf_low,past_target_cdf_high = self.fourier_mask_future_high_low(past_target_cdf)
+        past_time_feat_low,past_time_feat_high = self.fourier_mask_future_high_low(past_time_feat)
+        future_target_cdf_low,future_target_cdf_high = self.fourier_mask_future_high_low(future_target_cdf)
+        future_time_feat_low,future_time_feat_high = self.fourier_mask_future_high_low(future_time_feat)
 
 
-            likelihoods = []
-            likelihoods = self.diffusion.log_prob(targets, distr_args,
-                                                     share_ratio=1).unsqueeze(-1)
 
-            if self.scaling:
-                self.diffusion.scale = scale
+        rnn_outputs_low, _, scale_low, _, _ = self.unroll_encoder(
+            past_time_feat=past_time_feat_low,
+            past_target_cdf=past_target_cdf_low,
+            past_observed_values=past_observed_values,
+            past_is_pad=past_is_pad,
+            future_time_feat=future_time_feat_low,
+            future_target_cdf=future_target_cdf_low,
+            target_dimension_indicator=target_dimension_indicator,
+            index=0
+        )  # rnn_outputs -- 2* （128 48 128）  scale -- 128 1 274
+        rnn_outputs_high, _, scale_high, _, _ = self.unroll_encoder(
+            past_time_feat=past_time_feat_high,
+            past_target_cdf=past_target_cdf_high,
+            past_observed_values=past_observed_values,
+            past_is_pad=past_is_pad,
+            future_time_feat=future_time_feat_high,
+            future_target_cdf=future_target_cdf_high,
+            target_dimension_indicator=target_dimension_indicator,
+            index=1
+        )  # rnn_outputs -- 2* （128 48 128）  scale -- 128 1 274
 
-            past_observed_values = torch.min(
-                past_observed_values, 1 - past_is_pad.unsqueeze(-1)
-            )
+        # put together target sequence
+        # (batch_size, seq_len, target_dim)
+        target_low = torch.cat(
+            (past_target_cdf_low[:, -self.context_length:, ...],
+             future_target_cdf_low),
+            dim=1,
+        )
+        target_high = torch.cat(
+            (past_target_cdf_high[:, -self.context_length:, ...],
+             future_target_cdf_high),
+            dim=1,
+        )
+        target_low = target_low/scale_low
+        target_high = target_high/scale_high
 
-            observed_values = torch.cat(
-                (
-                    past_observed_values[:, -self.context_length:, ...],
-                    future_observed_values,
-                ),
-                dim=1,
-            )  # batch_size * seq_length * 370*2
+        # specifiy the beta variance for the coarse-grained dataset,
+        # the scalars in the forward and backward(sampling)are different
 
-            # mask the loss at one time step if one or more observations is missing
-            # in the target dimensions (batch_size, subseq_length, 1)
-            loss_weights, _ = observed_values.min(dim=-1, keepdim=True)
+        distr_args_low = self.distr_args_low(rnn_outputs_low)  # 128 48 100 * 2
+        distr_args_high = self.distr_args_high(rnn_outputs_high)  # 128 48 100 * 2
 
-            loss = weighted_average(
-                likelihoods, weights=loss_weights, dim=1).mean()
-            loss_list.append(loss)
 
-        loss_sum = sum(loss_item * weight_item for loss_item,
-                   weight_item in zip(loss_list, self.freq_weight_list))
+        likelihoods = []
+        likelihoods_low = self.diffusion_low.log_prob(target_low, distr_args_low,
+                                                 share_ratio=1).unsqueeze(-1)
+        likelihoods_high = self.diffusion_high.log_prob(target_high, distr_args_high,
+                                                 share_ratio=1).unsqueeze(-1)
 
-        return (loss_sum, likelihoods, distr_args)
+        if self.scaling:
+            self.diffusion_low.scale = scale_low
+            self.diffusion_high.scale = scale_high
+
+        past_observed_values = torch.min(
+            past_observed_values, 1 - past_is_pad.unsqueeze(-1)
+        )
+
+        observed_values = torch.cat(
+            (
+                past_observed_values[:, -self.context_length:, ...],
+                future_observed_values,
+            ),
+            dim=1,
+        )  # batch_size * seq_length * 370*2
+
+        # mask the loss at one time step if one or more observations is missing
+        # in the target dimensions (batch_size, subseq_length, 1)
+        loss_weights, _ = observed_values.min(dim=-1, keepdim=True)
+
+        loss_low = weighted_average(
+            likelihoods_low, weights=loss_weights, dim=1).mean()
+        # loss_list_low.append(loss_low)
+        loss_high = weighted_average(
+            likelihoods_high, weights=loss_weights, dim=1).mean()
+        # loss_list_high.append(loss_high)
+
+        # loss_sum = sum(loss_item * weight_item for loss_item,
+        #            weight_item in zip(loss_list, self.freq_weight_list))
+
+        loss_sum = loss_low * 0.5+ loss_high * 0.5
+
+        return (loss_sum, _, _)
 
 
 class mgtsdPredictionNetwork(mgtsdTrainingNetwork):
@@ -510,12 +580,15 @@ class mgtsdPredictionNetwork(mgtsdTrainingNetwork):
 
     def sampling_decoder(
         self,
-        past_target_cdf: torch.Tensor,
+        past_target_cdf_low: torch.Tensor,
+        past_target_cdf_high: torch.Tensor,
         target_dimension_indicator: torch.Tensor,
-        time_feat: torch.Tensor,
-        scale: torch.Tensor,
-        index,
-        begin_states: Union[List[torch.Tensor], torch.Tensor],
+        time_feat_low: torch.Tensor,
+        time_feat_high: torch.Tensor,
+        scale_low: torch.Tensor,
+        scale_high: torch.Tensor,
+        begin_states_low: Union[List[torch.Tensor], torch.Tensor],
+        begin_states_high: Union[List[torch.Tensor], torch.Tensor],
         # share_ratio_list: Union[List[torch.Tensor], torch.Tensor],
     ) -> torch.Tensor:
         """
@@ -548,55 +621,87 @@ class mgtsdPredictionNetwork(mgtsdTrainingNetwork):
 
         # blows-up the dimension of each tensor to
         # batch_size * self.num_sample_paths for increasing parallelism
-        repeated_past_target_cdf_list = repeat(past_target_cdf)
-        repeated_time_feat = repeat(time_feat)
-        repeated_scales_list = repeat(scale)
+        repeated_past_target_cdf_list_low = repeat(past_target_cdf_low)
+        repeated_past_target_cdf_list_high = repeat(past_target_cdf_high)
+        repeated_time_feat_low = repeat(time_feat_low)
+        repeated_time_feat_high = repeat(time_feat_high)
+        repeated_scales_list_low = repeat(scale_low)
+        repeated_scales_list_high = repeat(scale_high)
         if self.scaling:
-            self.diffusion.scale = repeated_scales_list
+            self.diffusion_low.scale = repeated_scales_list_low
+            self.diffusion_high.scale = repeated_scales_list_high
 
         repeated_target_dimension_indicator = repeat(
             target_dimension_indicator[:, :self.target_dim])
 
         if self.cell_type == "LSTM":
-            repeated_states_list = [repeat(s, dim=1) for s in begin_states]
+            repeated_states_list_low = [repeat(s, dim=1) for s in begin_states_low]
+            repeated_states_list_high = [repeat(s, dim=1) for s in begin_states_high]
         else:
-            repeated_states_list = repeat(begin_states, dim=1)
+            repeated_states_list_low = repeat(begin_states_low, dim=1)
+            repeated_states_list_high = repeat(begin_states_high, dim=1)
         # for each future time-units we draw new samples for this time-unit
         # and update the state
-        future_samples_list = []
+        future_samples_list_low = []
+        future_samples_list_high = []
         for k in range(self.prediction_length):  # future samples from multi-gran
             # for m in range(self.num_gran):
-            lags = self.get_lagged_subsequences(
-                sequence=repeated_past_target_cdf_list,
+            lags_low = self.get_lagged_subsequences(
+                sequence=repeated_past_target_cdf_list_low,
                 sequence_length=self.history_length + k,
                 indices=self.shifted_lags,
                 subsequences_length=1,
             )
-            rnn_outputs, repeated_states_list, _, _ = self.unroll(
-                begin_state=repeated_states_list,
-                lags=lags,
-                scale=repeated_scales_list,
+
+            lags_high = self.get_lagged_subsequences(
+                sequence=repeated_past_target_cdf_list_high,
+                sequence_length=self.history_length + k,
+                indices=self.shifted_lags,
+                subsequences_length=1,
+            )
+            rnn_outputs_low, repeated_states_list_low, _, _ = self.unroll(
+                begin_state=repeated_states_list_low,
+                lags=lags_low,
+                scale=repeated_scales_list_low,
                 # gran_index=m,  # use rnn which corresponding gran
-                time_feat=repeated_time_feat[:, k: k + 1, ...],
+                time_feat=repeated_time_feat_low[:, k: k + 1, ...],
                 target_dimension_indicator=repeated_target_dimension_indicator,
                 unroll_length=1,
-                index=index
+                index=0
             )
-            distr_args = self.distr_args(rnn_outputs)
-            new_samples = self.diffusion.sample(cond=distr_args,
-                                                share_ratio=1.0)
+            rnn_outputs_high, repeated_states_list_high, _, _ = self.unroll(
+                begin_state=repeated_states_list_high,
+                lags=lags_high,
+                scale=repeated_scales_list_high,
+                # gran_index=m,  # use rnn which corresponding gran
+                time_feat=repeated_time_feat_high[:, k: k + 1, ...],
+                target_dimension_indicator=repeated_target_dimension_indicator,
+                unroll_length=1,
+                index=1
+            )
+            distr_args_low = self.distr_args_low(rnn_outputs_low)
+            distr_args_high = self.distr_args_high(rnn_outputs_high)
+            new_samples_low = self.diffusion_low.sample(cond=distr_args_low,share_ratio=1.0)
+            new_samples_high = self.diffusion_high.sample(cond=distr_args_high,share_ratio=1.0)
             # new_samples = self.diffusion.sample_ode_torchdiffeq(cond=distr_args,
             #                                     )
 
-            new_samples *= repeated_scales_list
+            new_samples_low *= repeated_scales_list_low
+            new_samples_high *= repeated_scales_list_high
 
-            future_samples_list.append(new_samples)
-            repeated_past_target_cdf_list = torch.cat(
-                (repeated_past_target_cdf_list, new_samples), dim=1)
+            future_samples_list_low.append(new_samples_low)
+            future_samples_list_high.append(new_samples_high)
+            repeated_past_target_cdf_list_low = torch.cat(
+                (repeated_past_target_cdf_list_low, new_samples_low), dim=1)
+            repeated_past_target_cdf_list_high = torch.cat(
+                (repeated_past_target_cdf_list_high, new_samples_high), dim=1)
 
         # (batch_size * num_samples, prediction_length, target_dim)
-        samples_list = torch.cat(future_samples_list, dim=1)
-        samples_reshape_list = samples_list.reshape(
+        samples_list_low = torch.cat(future_samples_list_low, dim=1)
+        samples_list_high = torch.cat(future_samples_list_high, dim=1)
+
+        samples_list_res = samples_list_low+samples_list_high
+        samples_reshape_list = samples_list_res.reshape(
             (
                 -1,
                 self.num_parallel_samples,
@@ -670,7 +775,10 @@ class mgtsdPredictionNetwork(mgtsdTrainingNetwork):
         # # 划分粒度  end------------------------#####################################################################
 
 
-
+        past_target_cdf_low,past_target_cdf_high = self.fourier_mask_future_high_low(past_target_cdf)
+        past_time_feat_low,past_time_feat_high = self.fourier_mask_future_high_low(past_time_feat)
+        # future_target_cdf_low,future_target_cdf_high = self.fourier_mask_future_high_low(future_target_cdf)
+        future_time_feat_low,future_time_feat_high = self.fourier_mask_future_high_low(future_time_feat)
 
         # mark padded data as unobserved
         # (batch_size, target_dim, seq_len)
@@ -678,32 +786,45 @@ class mgtsdPredictionNetwork(mgtsdTrainingNetwork):
             past_observed_values, 1 - past_is_pad.unsqueeze(-1)
         )
         forecast_value_list=[]
-        for index, fourer_mask_layer in enumerate(self.fourier_mask_futrue):
-            # unroll the decoder in "training mode", i.e. by providing future data
-            past_target_cdf_fourier = fourer_mask_layer(past_target_cdf)
-            # future_target_cdf_fourier = fourer_mask_layer(future_target_cdf)
-            # unroll the decoder in "prediction mode", i.e. with past data only
-            _, begin_states, scale, _, _ = self.unroll_encoder(
-                past_time_feat=past_time_feat,
-                past_target_cdf=past_target_cdf_fourier,
-                past_observed_values=past_observed_values,
-                past_is_pad=past_is_pad,
-                future_time_feat=None,
-                future_target_cdf=None,
-                target_dimension_indicator=target_dimension_indicator,
-                index=index
-            )
+        # unroll the decoder in "training mode", i.e. by providing future data
+        # past_target_cdf_fourier = fourer_mask_layer(past_target_cdf)
+        # future_target_cdf_fourier = fourer_mask_layer(future_target_cdf)
+        # unroll the decoder in "prediction mode", i.e. with past data only
+        _, begin_states_low, scale_low, _, _ = self.unroll_encoder(
+            past_time_feat=past_time_feat_low,
+            past_target_cdf=past_target_cdf_low,
+            past_observed_values=past_observed_values,
+            past_is_pad=past_is_pad,
+            future_time_feat=None,
+            future_target_cdf=None,
+            target_dimension_indicator=target_dimension_indicator,
+            index=0
+        )
+        _, begin_states_high, scale_high, _, _ = self.unroll_encoder(
+            past_time_feat=past_time_feat_high,
+            past_target_cdf=past_target_cdf_high,
+            past_observed_values=past_observed_values,
+            past_is_pad=past_is_pad,
+            future_time_feat=None,
+            future_target_cdf=None,
+            target_dimension_indicator=target_dimension_indicator,
+            index=1
+        )
 
-            forecast_value = self.sampling_decoder(
-                past_target_cdf=past_target_cdf_fourier,
-                target_dimension_indicator=target_dimension_indicator,
-                time_feat=future_time_feat,
-                scale=scale,
-                begin_states=begin_states,
-                index=index
-                # share_ratio_list=self.share_ratio_list,
-            )
-            forecast_value_list.append(forecast_value)
+        forecast_value = self.sampling_decoder(
+            past_target_cdf_low=past_target_cdf_low,
+            past_target_cdf_high=past_target_cdf_high,
+            target_dimension_indicator=target_dimension_indicator,
+            time_feat_low=future_time_feat_low,
+            scale_low=scale_low,
+            begin_states_low=begin_states_low,
+            time_feat_high=future_time_feat_high,
+            scale_high=scale_high,
+            begin_states_high=begin_states_high,
+            # share_ratio_list=self.share_ratio_list,
+        )
+
+        forecast_value_list.append(forecast_value)
         forecast_value_sum=torch.stack(forecast_value_list,dim=-1)
         forecast_value_sum=forecast_value_sum.mean(dim=-1)
         # forecast_value_sum = sum(value_item  for value_item in zip(forecast_value_list)) / len(forecast_value_list)

@@ -72,7 +72,9 @@ class mgtsdEstimator(PyTorchEstimator):
         cardinality: List[int] = [1],
         embedding_dimension: int = 5,
         conditioning_length: int = 100,
-        diff_steps: int = 100,
+        diff_steps_low: int = 100,
+        diff_steps_high: int = 100,
+        fourier_rate=0.5,
         loss_type: str = "l2",
         beta_end=0.1,
         freq_ranges=[],
@@ -112,7 +114,9 @@ class mgtsdEstimator(PyTorchEstimator):
         self.freq_ranges=freq_ranges
         self.freq_weight_list=freq_weight_list
         self.conditioning_length = conditioning_length
-        self.diff_steps = diff_steps   # diffusion steps 100
+        self.diff_steps_low = diff_steps_low   # diffusion steps 100
+        self.diff_steps_high = diff_steps_high   # diffusion steps 100
+        self.fourier_rate = fourier_rate   # diffusion steps 100
         self.loss_type = loss_type  # L1 loss or L2 loss
         self.beta_end = beta_end  # beta end 0.1
         self.beta_schedule = beta_schedule  # linear or cosine etc.
@@ -255,7 +259,9 @@ class mgtsdEstimator(PyTorchEstimator):
             dropout_rate=self.dropout_rate,
             cardinality=self.cardinality,
             embedding_dimension=self.embedding_dimension,
-            diff_steps=self.diff_steps,
+            diff_steps_low=self.diff_steps_low,
+            diff_steps_high=self.diff_steps_high,
+            fourier_rate=self.fourier_rate,
             loss_type=self.loss_type,
             beta_end=self.beta_end,
             beta_schedule=self.beta_schedule,
@@ -289,7 +295,9 @@ class mgtsdEstimator(PyTorchEstimator):
             dropout_rate=self.dropout_rate,
             cardinality=self.cardinality,
             embedding_dimension=self.embedding_dimension,
-            diff_steps=self.diff_steps,
+            diff_steps_low=self.diff_steps_low,
+            diff_steps_high=self.diff_steps_high,
+            fourier_rate=self.fourier_rate,
             loss_type=self.loss_type,
             beta_end=self.beta_end,
             freq_rate_list=self.freq_rate_list,
