@@ -71,6 +71,10 @@ def parse_args():
                         help='freq_rate_list')
     parser.add_argument('--freq_weight_list', type=str, default="0.9_0.1",
                         help='freq_weight_list')
+    parser.add_argument('--end_ratio', type=float, default=0.3,
+                        help='end_ratio')
+    parser.add_argument('--rate', type=float, default=0.3,
+                        help='rate')
 
 
 
@@ -124,6 +128,8 @@ if __name__ == '__main__':
     num_gran = args.num_gran
 
     dataset_name = args.dataset
+    end_ratio = args.end_ratio
+    rate = args.rate
     input_size = input_size_all[dataset_name]
     args.input_size = input_size
     batch_size = args.batch_size
@@ -224,10 +230,12 @@ if __name__ == '__main__':
         cell_type='GRU',
         input_size=input_size,
         freq=dataset.metadata.freq,
+        rate=rate,
         loss_type='l2',
         scaling=True,
         freq_ranges=freq_ranges,
         freq_rate_list=freq_rate_list,
+        end_ratio=end_ratio,
         freq_weight_list=freq_weight_list,
         diff_steps=diff_steps,
         share_ratio_list=share_ratio_list,

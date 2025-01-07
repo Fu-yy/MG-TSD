@@ -75,11 +75,13 @@ class mgtsdEstimator(PyTorchEstimator):
         diff_steps: int = 100,
         loss_type: str = "l2",
         beta_end=0.1,
+        rate=0.5,
         freq_ranges=[],
         freq_rate_list: List[float] = [0.9,0.5],
         freq_weight_list: List[float] = [0.9,0.1],
         beta_schedule="linear",
         residual_layers=8,
+        end_ratio=0.3,
         residual_channels=8,
         dilation_cycle_length=2,
         scaling: bool = True,
@@ -106,9 +108,11 @@ class mgtsdEstimator(PyTorchEstimator):
         self.num_parallel_samples = num_parallel_samples  # parallel samples 100
         self.dropout_rate = dropout_rate
         self.cardinality = cardinality
+        self.rate = rate
         self.embedding_dimension = embedding_dimension
         self.freq_rate_list = freq_rate_list
         self.num_gran = num_gran
+        self.end_ratio = end_ratio
         self.freq_ranges=freq_ranges
         self.freq_weight_list=freq_weight_list
         self.conditioning_length = conditioning_length
@@ -250,6 +254,7 @@ class mgtsdEstimator(PyTorchEstimator):
             freq_weight_list =self.freq_weight_list, #freq_ranges [(0,20),(0,40)]
             cell_type=self.cell_type,
             history_length=self.history_length,
+            end_ratio=self.end_ratio,
             context_length=self.context_length,
             prediction_length=self.prediction_length,
             dropout_rate=self.dropout_rate,
@@ -257,6 +262,7 @@ class mgtsdEstimator(PyTorchEstimator):
             embedding_dimension=self.embedding_dimension,
             diff_steps=self.diff_steps,
             loss_type=self.loss_type,
+            rate=self.rate,
             beta_end=self.beta_end,
             beta_schedule=self.beta_schedule,
             residual_layers=self.residual_layers,
@@ -288,8 +294,10 @@ class mgtsdEstimator(PyTorchEstimator):
             prediction_length=self.prediction_length,
             dropout_rate=self.dropout_rate,
             cardinality=self.cardinality,
+            end_ratio=self.end_ratio,
             embedding_dimension=self.embedding_dimension,
             diff_steps=self.diff_steps,
+            rate=self.rate,
             loss_type=self.loss_type,
             beta_end=self.beta_end,
             freq_rate_list=self.freq_rate_list,

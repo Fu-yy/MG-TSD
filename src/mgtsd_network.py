@@ -38,10 +38,12 @@ class mgtsdTrainingNetwork(nn.Module):
         freq_rate_list: List[float],  # freq_rate_list
         loss_type: str,  # L1 loss or L2 loss
         beta_end: float,  # beta_end 0.1
+        end_ratio: float,  # end_ratio 0.1
         beta_schedule: str,  # linear or cosine
         residual_layers: int,
         residual_channels: int,
         dilation_cycle_length: int,
+        rate: float,
         cardinality: List[int] = [1],
         embedding_dimension: int = 1,
         freq_weight_list: List[float] = [0.9, 0.1],  # freq_weight_list
@@ -59,8 +61,10 @@ class mgtsdTrainingNetwork(nn.Module):
         self.scaling = scaling
         self.share_hidden = share_hidden
         self.weights = weights
+        self.end_ratio = end_ratio
         self.share_ratio_list = share_ratio_list
         self.num_gran = num_gran
+        self.rate = rate
         self.freq_ranges=freq_ranges
         self.freq_rate_list=freq_rate_list
         self.freq_weight_list=freq_weight_list
@@ -88,7 +92,14 @@ class mgtsdTrainingNetwork(nn.Module):
         #     batch_first=True,
         # )   # shape: (batch_size, seq_len, num_cells)
 
-        self.denoise_fn = EpsilonTheta(
+        self.denoise_fn_low = EpsilonTheta(
+            target_dim=target_dim,
+            cond_length=conditioning_length,
+            residual_layers=residual_layers,
+            residual_channels=residual_channels,
+            dilation_cycle_length=dilation_cycle_length,
+        )  # dinosing network
+        self.denoise_fn_high = EpsilonTheta(
             target_dim=target_dim,
             cond_length=conditioning_length,
             residual_layers=residual_layers,
@@ -97,11 +108,14 @@ class mgtsdTrainingNetwork(nn.Module):
         )  # dinosing network
 
         self.diffusion = GaussianDiffusion(
-            self.denoise_fn,
+            denoise_fn_low=self.denoise_fn_low,
+            denoise_fn_high=self.denoise_fn_high,
             input_size=target_dim,
             diff_steps=diff_steps,
             loss_type=loss_type,
             beta_end=beta_end,
+            end_ratio=end_ratio,
+            rate=rate,
             # share ratio, new argument to control diffusion and sampling
             share_ratio_list=share_ratio_list,
             beta_schedule=beta_schedule,
@@ -430,65 +444,65 @@ class mgtsdTrainingNetwork(nn.Module):
         loss_list = []
 
         # for freq_range in range(len(self.freq_rate_list)):
-        for index, fourer_mask_layer in enumerate(self.fourier_mask_futrue):
-            # unroll the decoder in "training mode", i.e. by providing future data
-            past_target_cdf_fourier = fourer_mask_layer(past_target_cdf)
-            future_target_cdf_fourier = fourer_mask_layer(future_target_cdf)
+        # for index, fourer_mask_layer in enumerate(self.fourier_mask_futrue):
+        # unroll the decoder in "training mode", i.e. by providing future data
+        past_target_cdf_fourier = past_target_cdf
+        future_target_cdf_fourier = future_target_cdf
 
-            rnn_outputs, _, scale, _, _ = self.unroll_encoder(
-                past_time_feat=past_time_feat,
-                past_target_cdf=past_target_cdf_fourier,
-                past_observed_values=past_observed_values,
-                past_is_pad=past_is_pad,
-                future_time_feat=future_time_feat,
-                future_target_cdf=future_target_cdf_fourier,
-                target_dimension_indicator=target_dimension_indicator,
-                index=index
-            )  # rnn_outputs -- 2* （128 48 128）  scale -- 128 1 274
+        rnn_outputs, _, scale, _, _ = self.unroll_encoder(
+            past_time_feat=past_time_feat,
+            past_target_cdf=past_target_cdf_fourier,
+            past_observed_values=past_observed_values,
+            past_is_pad=past_is_pad,
+            future_time_feat=future_time_feat,
+            future_target_cdf=future_target_cdf_fourier,
+            target_dimension_indicator=target_dimension_indicator,
+            index=0
+        )  # rnn_outputs -- 2* （128 48 128）  scale -- 128 1 274
 
-            # put together target sequence
-            # (batch_size, seq_len, target_dim)
-            target = torch.cat(
-                (past_target_cdf_fourier[:, -self.context_length:, ...],
-                 future_target_cdf_fourier),
-                dim=1,
-            )
-            target = target/scale
-            targets = target
+        # put together target sequence
+        # (batch_size, seq_len, target_dim)
+        target = torch.cat(
+            (past_target_cdf_fourier[:, -self.context_length:, ...],
+             future_target_cdf_fourier),
+            dim=1,
+        )
+        target = target/scale
+        targets = target
 
-            # specifiy the beta variance for the coarse-grained dataset,
-            # the scalars in the forward and backward(sampling)are different
+        # specifiy the beta variance for the coarse-grained dataset,
+        # the scalars in the forward and backward(sampling)are different
 
-            rnn_outputs_2 = rnn_outputs  # outputs from multiple rnns
-            distr_args = self.distr_args(rnn_outputs_2)  # 128 48 100 * 2
+        rnn_outputs_2 = rnn_outputs  # outputs from multiple rnns
+        distr_args = self.distr_args(rnn_outputs_2)  # 128 48 100 * 2
 
 
-            likelihoods = []
-            likelihoods = self.diffusion.log_prob(targets, distr_args,
-                                                     share_ratio=1).unsqueeze(-1)
+        likelihoods = []
+        likelihoods = self.diffusion.log_prob(targets, distr_args,
+                                                 share_ratio=1).unsqueeze(-1)
 
-            if self.scaling:
-                self.diffusion.scale = scale
+        if self.scaling:
+            self.diffusion.scale = scale
 
-            past_observed_values = torch.min(
-                past_observed_values, 1 - past_is_pad.unsqueeze(-1)
-            )
+        past_observed_values = torch.min(
+            past_observed_values, 1 - past_is_pad.unsqueeze(-1)
+        )
 
-            observed_values = torch.cat(
-                (
-                    past_observed_values[:, -self.context_length:, ...],
-                    future_observed_values,
-                ),
-                dim=1,
-            )  # batch_size * seq_length * 370*2
+        observed_values = torch.cat(
+            (
+                past_observed_values[:, -self.context_length:, ...],
+                future_observed_values,
+            ),
+            dim=1,
+        )  # batch_size * seq_length * 370*2
 
-            # mask the loss at one time step if one or more observations is missing
-            # in the target dimensions (batch_size, subseq_length, 1)
-            loss_weights, _ = observed_values.min(dim=-1, keepdim=True)
+        # mask the loss at one time step if one or more observations is missing
+        # in the target dimensions (batch_size, subseq_length, 1)
+        loss_weights, _ = observed_values.min(dim=-1, keepdim=True)
 
-            loss = weighted_average(
-                likelihoods, weights=loss_weights, dim=1).mean()
-            loss_list.append(loss)
+        loss = weighted_average(
+            likelihoods, weights=loss_weights, dim=1).mean()
+        loss_list.append(loss)
 
         loss_sum = sum(loss_item * weight_item for loss_item,
                    weight_item in zip(loss_list, self.freq_weight_list))
@@ -678,32 +692,33 @@ class mgtsdPredictionNetwork(mgtsdTrainingNetwork):
             past_observed_values, 1 - past_is_pad.unsqueeze(-1)
         )
         forecast_value_list=[]
-        for index, fourer_mask_layer in enumerate(self.fourier_mask_futrue):
-            # unroll the decoder in "training mode", i.e. by providing future data
-            past_target_cdf_fourier = fourer_mask_layer(past_target_cdf)
-            # future_target_cdf_fourier = fourer_mask_layer(future_target_cdf)
-            # unroll the decoder in "prediction mode", i.e. with past data only
-            _, begin_states, scale, _, _ = self.unroll_encoder(
-                past_time_feat=past_time_feat,
-                past_target_cdf=past_target_cdf_fourier,
-                past_observed_values=past_observed_values,
-                past_is_pad=past_is_pad,
-                future_time_feat=None,
-                future_target_cdf=None,
-                target_dimension_indicator=target_dimension_indicator,
-                index=index
-            )
+        # for index, fourer_mask_layer in enumerate(self.fourier_mask_futrue):
+        # unroll the decoder in "training mode", i.e. by providing future data
+        # past_target_cdf_fourier = fourer_mask_layer(past_target_cdf)
+        past_target_cdf_fourier = past_target_cdf
+        # future_target_cdf_fourier = fourer_mask_layer(future_target_cdf)
+        # unroll the decoder in "prediction mode", i.e. with past data only
+        _, begin_states, scale, _, _ = self.unroll_encoder(
+            past_time_feat=past_time_feat,
+            past_target_cdf=past_target_cdf_fourier,
+            past_observed_values=past_observed_values,
+            past_is_pad=past_is_pad,
+            future_time_feat=None,
+            future_target_cdf=None,
+            target_dimension_indicator=target_dimension_indicator,
+            index=0
+        )
 
-            forecast_value = self.sampling_decoder(
-                past_target_cdf=past_target_cdf_fourier,
-                target_dimension_indicator=target_dimension_indicator,
-                time_feat=future_time_feat,
-                scale=scale,
-                begin_states=begin_states,
-                index=index
-                # share_ratio_list=self.share_ratio_list,
-            )
-            forecast_value_list.append(forecast_value)
+        forecast_value = self.sampling_decoder(
+            past_target_cdf=past_target_cdf_fourier,
+            target_dimension_indicator=target_dimension_indicator,
+            time_feat=future_time_feat,
+            scale=scale,
+            begin_states=begin_states,
+            index=0
+            # share_ratio_list=self.share_ratio_list,
+        )
+        forecast_value_list.append(forecast_value)
         forecast_value_sum=torch.stack(forecast_value_list,dim=-1)
         forecast_value_sum=forecast_value_sum.mean(dim=-1)
         # forecast_value_sum = sum(value_item  for value_item in zip(forecast_value_list)) / len(forecast_value_list)

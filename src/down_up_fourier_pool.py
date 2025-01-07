@@ -66,6 +66,38 @@ class Average_pool_upsampler(nn.Module):
         out = upsampled
         return out
 
+class DonwSample_Fourier_high_low(nn.Module):
+    def __init__(self,rate):
+        super(DonwSample_Fourier_high_low, self).__init__()
+        self.rate=rate
+
+    def forward(self,x):
+        """
+            给定 2D 实数序列 x，做 rFFT，然后只保留 [freq_range[0], freq_range[1]) 的频率成分，
+            最后 iFFT 回时域并返回。
+
+            freq_range 以频谱下标来表示区间。例如 (0, 10) 表示只保留前 0~9 的频率 bin。
+            """
+        B, T, N = x.shape
+        X_f = torch.fft.rfft(x, dim=1)  # [freq_bins], freq_bins = floor(seq_len/2) + 1
+
+        # 构造掩码
+        mask = torch.zeros_like(X_f,device=x.device)
+        start, end = 0,int(self.rate * (T // 2 + 1))
+        end = min(end, (T // 2) + 1)  # 防止越界
+        start = min(start, (T // 2) + 1)  # 防止越界
+        if end < 0:
+            mask[:, end:, :] = 1.0
+
+        else:
+            mask[:, start:end, :] = 1.0
+        mask_high = 1-mask
+        X_f_masked = X_f * mask
+        X_f_masked_high = X_f * mask
+        # irfft 需要指定 n=seq_len 才能恢复到原长度
+        x_recover = torch.fft.irfft(X_f_masked, n=T, dim=1)
+        x_recover_high = torch.fft.irfft(X_f_masked_high, n=T, dim=1)
+        return x_recover,x_recover_high
 
 
 class DonwSample_Fourier(nn.Module):
