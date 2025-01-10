@@ -561,7 +561,7 @@ class mgtsdTrainingNetwork(nn.Module):
         # loss_sum = sum(loss_item * weight_item for loss_item,
         #            weight_item in zip(loss_list, self.freq_weight_list))
 
-        loss_sum = loss_low * 0.5+ loss_high * 0.5
+        loss_sum = loss_low * self.freq_weight_list[0]+ loss_high * self.freq_weight_list[1]
 
         return (loss_sum, _, _)
 
@@ -700,7 +700,7 @@ class mgtsdPredictionNetwork(mgtsdTrainingNetwork):
         samples_list_low = torch.cat(future_samples_list_low, dim=1)
         samples_list_high = torch.cat(future_samples_list_high, dim=1)
 
-        samples_list_res = samples_list_low+samples_list_high
+        samples_list_res = self.freq_rate_list[0] * samples_list_low+self.freq_rate_list[1] * samples_list_high
         samples_reshape_list = samples_list_res.reshape(
             (
                 -1,

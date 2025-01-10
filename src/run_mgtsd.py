@@ -369,7 +369,7 @@ if __name__ == '__main__':
 
         # test results for fine-grained dataset
 
-        filename = f"{result_path}/output_{dataset_name}_{model_name}_{mg_dict}h_{cur_gran}h_{diff_steps_low}dl_{diff_steps_high}dh_{weights}_ratio{share_ratio_list}.csv"
+        filename = f"{result_path}/output_{dataset_name}_{model_name}_{fourier_rate}fr_{freq_rate_list}frl_{diff_steps_low}dl_{diff_steps_high}dh_{freq_weight_list}fwl.csv"
         if not os.path.exists(filename):
             with open(filename, mode="a") as f:
                 f.write("epoch,model_name,CRPS,ND,NRMSE,CRPS_Sum,ND_Sum,NRMSE_Sum\n")
@@ -378,6 +378,6 @@ if __name__ == '__main__':
         with open(filename, mode="a") as f:  # append the column names to the file
             f.write(result_str)
         plot(targets_list[cur_gran_index][0], forecasts_list[cur_gran_index][0], prediction_length=dataset.metadata.prediction_length,
-             fname=f"{result_path}/plot_{dataset_name}_{model_name}_{mg_dict}h_{cur_gran}h_{diff_steps_low}dl_{diff_steps_high}dh_{weights}_ratio{share_ratio_list}.png")
+             fname=f"{result_path}/output_{dataset_name}_{model_name}_{fourier_rate}fr_{freq_rate_list}frl_{diff_steps_low}dl_{diff_steps_high}dh_{freq_weight_list}fwl.png")
         # plot_forecast(targets_list[cur_gran_index][0], forecasts_list[cur_gran_index][0], prediction_length=dataset.metadata.prediction_length,
         #      fname=f"{result_path}/plot_{dataset_name}_{model_name}_{mg_dict}h_{cur_gran}h_{diff_steps}_{weights}_ratio{share_ratio_list}.png")
